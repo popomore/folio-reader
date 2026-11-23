@@ -1,6 +1,16 @@
 import Darwin
 import Foundation
 
+struct ArchiveLink: Sendable {
+    let path: String
+    let fragment: String?
+
+    init(_ url: URL) {
+        path = String(url.path.dropFirst())
+        fragment = url.fragment?.removingPercentEncoding
+    }
+}
+
 struct ArchiveItem: Identifiable, Sendable {
     let path: String
     let directory: Bool

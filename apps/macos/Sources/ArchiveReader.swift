@@ -172,12 +172,12 @@ struct ArchiveReader: View {
     }
 
     private func follow(_ url: URL) {
-        let path = String(url.path.dropFirst())
-        if tab?.location.path == path, let fragment = url.fragment {
+        let link = ArchiveLink(url)
+        if tab?.location.path == link.path, let fragment = link.fragment {
             tab?.web?.heading(fragment)
         } else {
-            pendingFragment = url.fragment
-            selected = path
+            pendingFragment = link.fragment
+            selected = link.path
         }
     }
 }

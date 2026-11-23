@@ -25,6 +25,15 @@ struct ArchiveCheck {
             throw CoreError(message: "Usage: check-archive-preview <app> <fixtures>")
         }
         let root = URL(fileURLWithPath: CommandLine.arguments[2])
+        let headings = try Core.textPreview(for: "guide.md", source: "## Café\n\n## 中文标题\n")?.headings ?? []
+        try require(headings.count == 2, "Expected Unicode heading fixtures.")
+        for heading in headings {
+            var components = URLComponents(string: "folio://files/docs/guide.md")!
+            components.fragment = heading.id
+            let link = ArchiveLink(components.url!)
+            try require(link.path == "docs/guide.md" && link.fragment == heading.id,
+                        "Archived Unicode heading links must target the rendered heading ID.")
+        }
         let before = try FileManager.default.contentsOfDirectory(atPath: FileManager.default.temporaryDirectory.path)
             .filter { $0.hasPrefix("folio-archive-") }.sorted()
         let extensions = ["zip", "tar", "tar.gz", "tgz", "tar.bz2", "tbz", "tbz2", "tar.xz", "txz", "7z", "rar"]
