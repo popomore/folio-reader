@@ -1,0 +1,23 @@
+<!doctype html>
+<html data-color-scheme="light">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src folio-model://preview; style-src folio-model://preview 'unsafe-inline'; connect-src folio-model://preview data: blob:; img-src folio-model://preview data: blob:; base-uri 'none'; form-action 'none'">
+  <link rel="stylesheet" href="model-viewer.css">
+  <script defer src="model-viewer.js"></script>
+  <title>3D Model</title>
+</head>
+<body>
+  <nav aria-label="Model controls" hidden>
+    <button id="reset" title="Reset view (R)">Reset view</button>
+    <button id="wireframe" aria-pressed="false" title="Toggle wireframe (W)">Wireframe</button>
+    <span id="help">Drag to rotate · Scroll to zoom · Right-drag to pan</span>
+  </nav>
+  <canvas tabindex="0" aria-label="3D model. Drag to rotate, scroll to zoom, right-drag or arrow keys to pan. Press R to reset, W for wireframe, plus or minus to zoom."></canvas>
+  <footer>
+    <p id="status" role="status">Loading model…</p>
+    <p id="note"></p>
+  </footer>
+</body>
+</html>

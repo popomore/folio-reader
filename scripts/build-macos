@@ -68,6 +68,7 @@ cp apps/macos/Resources/reader.css "$quicklook/Contents/Resources/"
 ditto apps/macos/Themes "$staged/Contents/Resources/Themes"
 ditto apps/macos/Themes "$quicklook/Contents/Resources/Themes"
 cp "$staged/Contents/Resources/reader.js" "$quicklook/Contents/Resources/"
+cp "$staged/Contents/Resources/"model-viewer.* "$quicklook/Contents/Resources/"
 ditto "$sparkle/Sparkle.framework" "$staged/Contents/Frameworks/Sparkle.framework"
 python3 - "$staged/Contents/Info.plist" "$quicklook/Contents/Info.plist" "$mode" "$name" "$bundle_id" "$version" "$build_number" <<'PLIST'
 import base64
@@ -119,7 +120,7 @@ xcrun swiftc -swift-version 6 -target "$arch-apple-macosx14.0" -warnings-as-erro
   -application-extension -parse-as-library -module-name FolioQuickLook \
   -Xlinker -e -Xlinker _NSExtensionMain -Xlinker -dead_strip \
   -import-objc-header apps/macos/Bridge.h \
-  apps/macos/Sources/Core.swift apps/macos/Sources/FolioTheme.swift apps/macos/QuickLook/*.swift \
+  apps/macos/Sources/{Core,FolioTheme,ModelPreview}.swift apps/macos/QuickLook/*.swift \
   "$CARGO_TARGET_DIR/$target/release/libfolio_bridge.a" \
   -lz -liconv -framework Security -framework SystemConfiguration -framework CoreFoundation \
   -o "$quicklook/Contents/MacOS/FolioQuickLook"

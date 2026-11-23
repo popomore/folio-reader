@@ -8,7 +8,7 @@ Folio is an open-source macOS reader for local project files. Browse saved folde
 
 ## Highlights
 
-- **Read local files.** Preview Markdown, text, static HTML, RTF, PDF, images, audio, and video. View CSV and TSV as tables and render Mermaid or Vega-Lite diagrams.
+- **Read local files.** Preview Markdown, text, static HTML, RTF, PDF, images, audio, video, and 3D models. View CSV and TSV as tables and render Mermaid or Vega-Lite diagrams.
 - **Keep related files together.** Save multiple folders, open tabs and split panes, jump to Markdown headings, and inspect Git history and diffs.
 - **Customize reading.** Choose a light or dark appearance and edit the JSON palettes in **Settings → Appearance → Themes**.
 - **Edit in place.** Switch between reading, source, and source with live preview. Use Command-S to save.
@@ -27,6 +27,29 @@ In **Settings → Appearance → Themes**, choose **Open Theme Folder** to find
 [folio-dark.json](apps/macos/Themes/folio-dark.json). Edit either file and choose
 **Reload Themes**. Omitted colors inherit the defaults. Finder Quick Look uses
 the bundled colors.
+
+## 3D models and printing
+
+Open **STL, OBJ, PLY, glTF, GLB, and 3MF** files in a workspace or floating preview.
+Drag to rotate, scroll to zoom, and right-drag to pan. Use **Reset view** or **R**
+to fit the model and **Wireframe** or **W** to inspect its mesh. Finder Quick Look
+shows a still image of self-contained models. If a glTF or GLB needs sibling
+buffers or textures, Quick Look reports that it must be opened in Folio; the
+workspace and floating preview can load those files from the model folder.
+
+3MF previews include mesh geometry, component and build transforms, physical
+units, base materials, vertex colors, and production-extension references to
+other model parts in the archive, including common Bambu Studio and PrusaSlicer
+projects. Texture maps, slicer paint, printer settings, and toolpaths are not
+shown. A sliced `.gcode.3mf` without model geometry reports that no model is
+available. This preview does not check whether a model can be printed.
+
+Models render offline. glTF buffers and textures must be embedded or stored in
+the model's folder or its subfolders; network resources and parent-directory
+references are blocked. OBJ previews show geometry and vertex colors without
+external MTL materials. glTF extensions that need separate compression decoders
+are not supported. Preview limits are 128 MiB per file, 256 MiB of local resources
+or unpacked 3MF model XML, and two million displayed triangles.
 
 ## Command line
 
@@ -64,6 +87,7 @@ cargo test --locked -p folio-core --no-default-features
 npm test --prefix renderer
 scripts/check-consumer
 scripts/check-quicklook "$app"
+scripts/check-model-preview "$app"
 ```
 
 ## Embed the Rust core

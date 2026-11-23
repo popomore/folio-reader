@@ -86,6 +86,16 @@
                 <string>public.tab-separated-values-text</string>
                 <string>org.popomore.folio.mermaid</string>
                 <string>org.popomore.folio.vega-lite</string>
+                <!-- 3D models and print projects -->
+                <string>public.standard-tesselated-geometry-format</string>
+                <string>public.geometry-definition-format</string>
+                <string>public.polygon-file-format</string>
+                <string>org.khronos.gltf</string>
+                <string>org.khronos.glb</string>
+                <string>org.3mfconsortium.3mf</string>
+                <string>com.bambulab.3mf</string>
+                <string>com.bambulab.gltf</string>
+                <string>com.bambulab.glb</string>
             </array>
         </dict>
     </dict>

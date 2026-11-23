@@ -34,6 +34,8 @@ struct NativePreview: View {
             }
         case .audio, .video:
             MediaReader(file: file, audio: kind == .audio, playbackChanged: playbackChanged)
+        case .model:
+            ModelReader(file: file).id(file)
         default:
             unavailable("Folio has no preview for this file type.")
         }

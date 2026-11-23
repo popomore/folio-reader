@@ -7,6 +7,7 @@ final class PreviewProvider: QLPreviewProvider, QLPreviewingController {
 
     enum Content {
         case native(URL)
+        case model(URL)
         case html(Data, hasCharts: Bool)
     }
 
@@ -15,6 +16,9 @@ final class PreviewProvider: QLPreviewProvider, QLPreviewingController {
         switch try Self.content(at: request.fileURL, resources: resources) {
         case .native(let file):
             return QLPreviewReply(fileURL: file)
+        case .model(let file):
+            let png = try await ModelSnapshot.render(file, resources: resources)
+            return QLPreviewReply(dataOfContentType: .png, contentSize: Self.previewSize) { _ in png }
         case .html(let page, let hasCharts):
             if hasCharts, let pdf = try? await ChartPreview.render(page, resources: resources) {
                 return QLPreviewReply(dataOfContentType: .pdf, contentSize: Self.previewSize) { _ in pdf }
@@ -34,6 +38,8 @@ final class PreviewProvider: QLPreviewProvider, QLPreviewingController {
         switch try Core.kind(of: file.lastPathComponent) {
         case .pdf, .rtf, .image, .audio, .video:
             return .native(file)
+        case .model:
+            return .model(file)
         case .markdown, .text, .html, .table, .mermaid, .vega:
             return try textContent(at: file, resources: resources)
         case .other:

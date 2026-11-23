@@ -1,0 +1,17 @@
+#!/usr/bin/env bash
+set -euo pipefail
+cd "$(dirname "$0")/.."
+app="${1:?Usage: scripts/check-model-preview <app> [fixture-output]}"
+stage="$(mktemp -d "$PWD/.build/model-check.XXXXXX")"
+trap 'rm -rf "$stage"' EXIT
+fixtures="${2:-$stage/fixtures}"
+node scripts/generate-model-fixtures.mjs "$fixtures"
+renderer/node_modules/.bin/esbuild renderer/model-checks.js --bundle --target=safari17 --outfile="$stage/parser-check.js" --log-level=warning
+xcrun swiftc -swift-version 6 -target arm64-apple-macosx14.0 -warnings-as-errors \
+  -import-objc-header apps/macos/Bridge.h \
+  apps/macos/Sources/{Core,FolioTheme,ModelPreview}.swift apps/macos/QuickLook/*.swift \
+  apps/macos/ModelPreviewTests/ModelPreviewCheck.swift \
+  target/aarch64-apple-darwin/release/libfolio_bridge.a \
+  -lz -liconv -framework Security -framework SystemConfiguration -framework CoreFoundation \
+  -o "$stage/check-model-preview"
+"$stage/check-model-preview" "$app" "$fixtures" "$stage/parser-check.js"
