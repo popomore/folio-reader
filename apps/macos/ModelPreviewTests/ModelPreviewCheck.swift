@@ -69,15 +69,27 @@ struct ModelPreviewCheck {
                     print(checks ?? "")
                     let wireframe = try await view.callAsyncJavaScript("document.querySelector('#wireframe').click(); return document.querySelector('#wireframe').getAttribute('aria-pressed')", contentWorld: .page)
                     try require(wireframe as? String == "true", "The wireframe control did not toggle.")
-                    _ = try await view.callAsyncJavaScript("document.querySelector('#wireframe').click(); document.querySelector('#reset').click()", contentWorld: .page)
+                    _ = try await view.callAsyncJavaScript("document.querySelector('#wireframe').click()", contentWorld: .page)
+                    view.setFrameSize(CGSize(width: 500, height: 700))
+                    try await Task.sleep(for: .milliseconds(100))
                     let zoomAndReset = try await view.callAsyncJavaScript("""
+                        // Keep the baseline and assertions in one task after viewport changes.
+                        document.querySelector('#reset').click();
+                        const beforeState = window.folioModelViewState();
                         const before = window.folioModelSnapshot();
                         document.querySelector('canvas').dispatchEvent(new KeyboardEvent('keydown', {key: '+'}));
+                        const zoomState = window.folioModelViewState();
                         const zoomed = window.folioModelSnapshot();
                         document.querySelector('#reset').click();
-                        return before !== zoomed && before === window.folioModelSnapshot();
-                        """, contentWorld: .page)
-                    try require(zoomAndReset as? Bool == true, "Zoom must change the rendered model and Reset view must restore it.")
+                        const resetState = window.folioModelViewState();
+                        const values = (state) => [...state.position, ...state.target, state.aspect, state.near, state.far];
+                        const resetRestored = values(beforeState).every((value, i) => Math.abs(value - values(resetState)[i]) < 1e-8);
+                        const cameraMoved = beforeState.position.some((value, i) => Math.abs(value - zoomState.position[i]) > 1e-6);
+                        return {zoomChanged: before !== zoomed, cameraMoved, resetRestored, beforeState, zoomState, resetState};
+                        """, contentWorld: .page) as? [String: Any]
+                    try require(zoomAndReset?["zoomChanged"] as? Bool == true && zoomAndReset?["cameraMoved"] as? Bool == true &&
+                                zoomAndReset?["resetRestored"] as? Bool == true,
+                                "Zoom/reset must change the rendered view and restore its camera state: \(zoomAndReset ?? [:])")
                     let encoded = try await view.callAsyncJavaScript("return window.folioModelSnapshot()", contentWorld: .page) as? String
                     try require(encoded.flatMap { Data(base64Encoded: $0) }.map(hasModelPixels) == true,
                                 "The WebGL canvas did not contain rendered geometry.")

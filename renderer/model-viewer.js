@@ -132,6 +132,10 @@ window.folioModelSnapshot = () => {
   return canvas.toDataURL("image/png").split(",")[1];
 };
 window.folioModelReset = reset;
+window.folioModelViewState = () => ({
+  position: camera.position.toArray(), target: controls.target.toArray(),
+  aspect: camera.aspect, near: camera.near, far: camera.far,
+});
 window.folioModelDispose = () => {
   if (frame !== undefined) cancelAnimationFrame(frame);
   controls?.dispose();
