@@ -1,7 +1,7 @@
 import Foundation
 
 enum FileKind: String, Decodable {
-    case markdown, text, html, rtf, pdf, image, audio, video, model, table, mermaid, vega, other
+    case markdown, text, html, rtf, pdf, image, audio, video, model, archive, table, mermaid, vega, other
 
     var label: String {
         switch self {
@@ -24,6 +24,7 @@ enum FileKind: String, Decodable {
         case .audio: "waveform"
         case .video: "film"
         case .model: "cube"
+        case .archive: "archivebox"
         case .table: "tablecells"
         case .mermaid: "point.3.connected.trianglepath.dotted"
         case .vega: "chart.bar.xaxis"

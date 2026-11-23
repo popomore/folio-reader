@@ -139,6 +139,48 @@ fn models_are_read_only_even_when_the_format_is_text() -> Result<(), Error> {
     Ok(())
 }
 
+#[test]
+fn archives_are_read_only_and_models_keep_their_preview_kind() -> Result<(), Error> {
+    let root = tempdir()?;
+    let workspace = Workspace::open(root.path())?;
+    for name in [
+        "notes.ZIP",
+        "files.tar",
+        "files.tar.gz",
+        "files.tgz",
+        "files.tar.bz2",
+        "files.tbz",
+        "files.tbz2",
+        "files.tar.xz",
+        "files.txz",
+        "files.7z",
+        "files.rar",
+        "note.md.gz",
+        "note.md.bz2",
+        "note.md.xz",
+    ] {
+        fs::write(root.path().join(name), b"archive fixture\0")?;
+        let document = workspace.read(name)?;
+        assert_eq!(document.kind, FileKind::Archive, "{name}");
+        assert!(!document.kind.editable());
+        assert_eq!(document.bytes, 16);
+        assert!(
+            document.source.is_none() && document.revision.is_none() && document.preview.is_none()
+        );
+    }
+    assert!(
+        workspace
+            .list("")?
+            .iter()
+            .all(|entry| entry.kind == Some(FileKind::Archive))
+    );
+    assert_eq!(
+        FileKind::from_path(Path::new("project.gcode.3mf")),
+        FileKind::Model
+    );
+    Ok(())
+}
+
 #[cfg(feature = "git")]
 #[test]
 fn file_history_and_staged_and_unstaged_patches() -> Result<(), Error> {

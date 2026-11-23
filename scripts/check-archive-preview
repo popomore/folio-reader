@@ -1,0 +1,17 @@
+#!/usr/bin/env bash
+set -euo pipefail
+cd "$(dirname "$0")/.."
+app="${1:?Usage: scripts/check-archive-preview <app> [fixture-output]}"
+app="$(cd "$app" && pwd)"
+stage="$(mktemp -d "$PWD/.build/archive-check.XXXXXX")"
+trap 'rm -rf "$stage"' EXIT
+fixtures="${2:-$stage/fixtures}"
+python3 scripts/generate-archive-fixtures.py "$fixtures"
+xcrun swiftc -swift-version 6 -target arm64-apple-macosx14.0 -warnings-as-errors \
+  -import-objc-header apps/macos/Bridge.h \
+  apps/macos/Sources/{Archive,Core,FolioTheme,ModelPreview}.swift apps/macos/QuickLook/*.swift \
+  apps/macos/ArchiveTests/ArchiveCheck.swift \
+  target/aarch64-apple-darwin/release/libfolio_bridge.a \
+  -larchive -lz -liconv -framework Security -framework SystemConfiguration -framework CoreFoundation \
+  -o "$stage/check-archive-preview"
+"$stage/check-archive-preview" "$app" "$fixtures"

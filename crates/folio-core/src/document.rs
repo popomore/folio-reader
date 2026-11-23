@@ -16,6 +16,7 @@ pub enum FileKind {
     Audio,
     Video,
     Model,
+    Archive,
     Table,
     Mermaid,
     Vega,
@@ -48,6 +49,9 @@ impl FileKind {
             "mp3" | "m4a" | "aac" | "wav" | "aiff" | "caf" | "flac" => Self::Audio,
             "mp4" | "m4v" | "mov" => Self::Video,
             "stl" | "obj" | "ply" | "gltf" | "glb" | "3mf" => Self::Model,
+            "zip" | "tar" | "gz" | "tgz" | "bz2" | "tbz" | "tbz2" | "xz" | "txz" | "7z" | "rar" => {
+                Self::Archive
+            }
             "csv" | "tsv" => Self::Table,
             "mmd" | "mermaid" => Self::Mermaid,
             "vl" => Self::Vega,
