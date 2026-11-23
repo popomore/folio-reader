@@ -30,6 +30,7 @@ struct ModelPreviewCheck {
         let attributes = extensionInfo?["NSExtensionAttributes"] as? [String: Any]
         let registered = Set(attributes?["QLSupportedContentTypes"] as? [String] ?? [])
         for fixture in fixtures {
+            diagnostic("starting \(fixture.name)")
             let file = root.appendingPathComponent(fixture.name)
             let kind = try Core.kind(of: fixture.name)
             try require(kind == .model, "The core did not recognize \(fixture.name).")
@@ -120,6 +121,12 @@ struct ModelPreviewCheck {
                         }
                         return {zoomChanged, cameraMoved, resetRestored, beforeState, zoomState, resetState, gpu};
                         """, contentWorld: .page) as? [String: Any]
+                    if zoomAndReset?["zoomChanged"] as? Bool != true {
+                        for (label, antialias, windowed) in [("fresh", true, false), ("without antialiasing", false, false), ("windowed", true, true)] {
+                            do { try await probeRenderer(file: file, app: app, label: label, antialias: antialias, windowed: windowed) }
+                            catch { diagnostic("\(label): \(error)") }
+                        }
+                    }
                     try require(zoomAndReset?["zoomChanged"] as? Bool == true && zoomAndReset?["cameraMoved"] as? Bool == true &&
                                 zoomAndReset?["resetRestored"] as? Bool == true,
                                 "Zoom/reset must change the rendered view and restore its camera state: \(zoomAndReset ?? [:])")
@@ -152,6 +159,46 @@ struct ModelPreviewCheck {
         }
         try require(failures.isEmpty, failures.joined(separator: "\n"))
         print("Verified \(fixtures.count) model fixtures, offline resource boundaries, WebGL controls and Finder snapshot.")
+    }
+
+    private static func diagnostic(_ message: String) {
+        FileHandle.standardError.write(Data("[DEBUG-folio-context] \(message)\n".utf8))
+    }
+
+    @MainActor
+    private static func probeRenderer(file: URL, app: Bundle, label: String, antialias: Bool, windowed: Bool) async throws {
+        let configuration = WKWebViewConfiguration()
+        configuration.userContentController.addUserScript(WKUserScript(source: """
+            window.contextEvents = [];
+            for (const eventName of ['webglcontextlost', 'webglcontextrestored']) {
+                document.addEventListener(eventName, e => window.contextEvents.push({type:e.type, trusted:e.isTrusted, time:performance.now()}), true);
+            }
+            const getContext = HTMLCanvasElement.prototype.getContext;
+            HTMLCanvasElement.prototype.getContext = function(type, attrs) {
+                return getContext.call(this, type, type === 'webgl2' ? {...attrs, antialias: \(antialias)} : attrs);
+            };
+            """, injectionTime: .atDocumentStart, forMainFrameOnly: true))
+        let session = ModelPreviewSession(file: file, resources: app, snapshot: true)
+        let view = session.makeView(size: CGSize(width: 500, height: 700), configuration: configuration)
+        let window: NSWindow? = windowed ? NSWindow(contentRect: view.frame, styleMask: [.titled], backing: .buffered, defer: false) : nil
+        window?.isReleasedWhenClosed = false
+        window?.contentView = view
+        window?.orderFront(nil)
+        defer { session.dispose(view); window?.close() }
+        let deadline = ContinuousClock.now + .seconds(20)
+        while session.state == "loading", ContinuousClock.now < deadline { try await Task.sleep(for: .milliseconds(50)) }
+        try await Task.sleep(for: .milliseconds(100))
+        let result = try await view.callAsyncJavaScript("""
+            const image = window.folioModelSnapshot?.();
+            const gl = document.querySelector('canvas').getContext('webgl2');
+            const pixel = new Uint8Array(4);
+            gl.readPixels(250, 250, 1, 1, gl.RGBA, gl.UNSIGNED_BYTE, pixel);
+            const debug = gl.getExtension('WEBGL_debug_renderer_info');
+            return {state:window.folioModelState, length:image?.length, pixel:[...pixel], events:window.contextEvents,
+                    lost:gl.isContextLost(), error:gl.getError(), buffer:[gl.drawingBufferWidth,gl.drawingBufferHeight],
+                    renderer:debug ? gl.getParameter(debug.UNMASKED_RENDERER_WEBGL) : gl.getParameter(gl.RENDERER)};
+            """, contentWorld: .page)
+        diagnostic("\(label): \(result ?? "nil")")
     }
 
     @MainActor
