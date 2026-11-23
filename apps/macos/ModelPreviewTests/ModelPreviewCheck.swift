@@ -30,7 +30,6 @@ struct ModelPreviewCheck {
         let attributes = extensionInfo?["NSExtensionAttributes"] as? [String: Any]
         let registered = Set(attributes?["QLSupportedContentTypes"] as? [String] ?? [])
         for fixture in fixtures {
-            diagnostic("starting \(fixture.name)")
             let file = root.appendingPathComponent(fixture.name)
             let kind = try Core.kind(of: fixture.name)
             try require(kind == .model, "The core did not recognize \(fixture.name).")
@@ -67,7 +66,7 @@ struct ModelPreviewCheck {
                 if fixture.name == "assembly.3mf" {
                     _ = try await view.evaluateJavaScript(parserChecks)
                     let checks = try await view.callAsyncJavaScript("return await window.folioModelParserChecks()", contentWorld: .page)
-                    print(checks ?? "")
+                    log(checks ?? "")
                     _ = try await view.callAsyncJavaScript("window.dispatchEvent(new PageTransitionEvent('pagehide'))", contentWorld: .page)
                     try await Task.sleep(for: .milliseconds(100))
                     try require(session.state == "ready", "A retained native preview must not destroy its renderer on pagehide: \(session.failure ?? session.state)")
@@ -82,13 +81,13 @@ struct ModelPreviewCheck {
                         """, contentWorld: .page)
                     try await Task.sleep(for: .milliseconds(50))
                     _ = try await view.callAsyncJavaScript("""
-                        window.folioControlBefore = {state: window.folioModelViewState(), image: window.folioModelSnapshot()};
+                        window.folioControlBefore = {state: window.folioModelViewState(), image: window.folioModelSnapshot().rgba};
                         document.querySelector('canvas').dispatchEvent(new KeyboardEvent('keydown', {key: '+'}));
                         window.folioModelSnapshot();
                         """, contentWorld: .page)
                     try await Task.sleep(for: .milliseconds(50))
                     _ = try await view.callAsyncJavaScript("""
-                        window.folioControlZoom = {state: window.folioModelViewState(), image: window.folioModelSnapshot()};
+                        window.folioControlZoom = {state: window.folioModelViewState(), image: window.folioModelSnapshot().rgba};
                         document.querySelector('#reset').click();
                         window.folioModelSnapshot();
                         """, contentWorld: .page)
@@ -121,30 +120,26 @@ struct ModelPreviewCheck {
                         }
                         return {zoomChanged, cameraMoved, resetRestored, beforeState, zoomState, resetState, gpu};
                         """, contentWorld: .page) as? [String: Any]
-                    if zoomAndReset?["zoomChanged"] as? Bool != true {
-                        for (label, antialias, windowed) in [("fresh", true, false), ("without antialiasing", false, false), ("windowed", true, true)] {
-                            do { try await probeRenderer(file: file, app: app, label: label, antialias: antialias, windowed: windowed) }
-                            catch { diagnostic("\(label): \(error)") }
-                        }
-                    }
                     try require(zoomAndReset?["zoomChanged"] as? Bool == true && zoomAndReset?["cameraMoved"] as? Bool == true &&
                                 zoomAndReset?["resetRestored"] as? Bool == true,
                                 "Zoom/reset must change the rendered view and restore its camera state: \(zoomAndReset ?? [:])")
-                    let encoded = try await view.callAsyncJavaScript("return window.folioModelSnapshot()", contentWorld: .page) as? String
-                    try require(encoded.flatMap { Data(base64Encoded: $0) }.map(hasModelPixels) == true,
+                    let png = try await ModelSnapshot.capture(view, timeout: .seconds(5))
+                    try require(hasModelPixels(png),
                                 "The WebGL canvas did not contain rendered geometry.")
                     let disposed = try await view.callAsyncJavaScript("window.folioModelDispose(); window.folioModelDispose(); return window.folioModelViewState().disposed", contentWorld: .page)
                     try require(disposed as? Bool == true, "Explicit native renderer cleanup must be idempotent.")
                 }
             }
-            print("Verified \(fixture.name): \(session.state)")
+            log("Verified \(fixture.name): \(session.state)")
         }
         let still = try await ModelSnapshot.render(root.appendingPathComponent("assembly.3mf"), resources: quicklook)
         try require(hasModelPixels(still), "Finder's snapshot must contain visible geometry.")
         try still.write(to: root.appendingPathComponent("quicklook-assembly.png"))
         let checks: [(String, @MainActor () async throws -> Void)] = [
             ("appearance during loading", { try await verifyLoadingAppearance(app: app, root: root) }),
-            ("first resource failure", { try await verifyFirstFailure(app: app, root: root) }),
+            ("context failure during the first frame", { try await verifyFirstFrameFailure(app: app, root: root) }),
+            ("snapshot without WebKit PNG serialization", { try await verifySnapshotReadback(app: app, root: root) }),
+            ("first resource failure", { try await verifyFirstFailure(app: app) }),
             ("Quick Look sibling-resource policy", {
                 var rejected = false
                 do { _ = try await ModelSnapshot.render(root.appendingPathComponent("cube.gltf"), resources: quicklook) }
@@ -154,51 +149,97 @@ struct ModelPreviewCheck {
         ]
         var failures: [String] = []
         for (name, check) in checks {
-            do { try await check(); print("Verified \(name)") }
+            do { try await check(); log("Verified \(name)") }
             catch { failures.append("\(name): \(error.localizedDescription)") }
         }
         try require(failures.isEmpty, failures.joined(separator: "\n"))
-        print("Verified \(fixtures.count) model fixtures, offline resource boundaries, WebGL controls and Finder snapshot.")
+        log("Verified \(fixtures.count) model fixtures, offline resource boundaries, WebGL controls and Finder snapshot.")
     }
 
-    private static func diagnostic(_ message: String) {
-        FileHandle.standardError.write(Data("[DEBUG-folio-context] \(message)\n".utf8))
+    private static func log(_ message: Any) {
+        FileHandle.standardError.write(Data("\(message)\n".utf8))
     }
 
     @MainActor
-    private static func probeRenderer(file: URL, app: Bundle, label: String, antialias: Bool, windowed: Bool) async throws {
+    private static func verifySnapshotReadback(app: Bundle, root: URL) async throws {
         let configuration = WKWebViewConfiguration()
         configuration.userContentController.addUserScript(WKUserScript(source: """
-            window.contextEvents = [];
-            for (const eventName of ['webglcontextlost', 'webglcontextrestored']) {
-                document.addEventListener(eventName, e => window.contextEvents.push({type:e.type, trusted:e.isTrusted, time:performance.now()}), true);
-            }
-            const getContext = HTMLCanvasElement.prototype.getContext;
-            HTMLCanvasElement.prototype.getContext = function(type, attrs) {
-                return getContext.call(this, type, type === 'webgl2' ? {...attrs, antialias: \(antialias)} : attrs);
-            };
+            HTMLCanvasElement.prototype.toDataURL = () => 'data:,';
             """, injectionTime: .atDocumentStart, forMainFrameOnly: true))
-        let session = ModelPreviewSession(file: file, resources: app, snapshot: true)
-        let view = session.makeView(size: CGSize(width: 500, height: 700), configuration: configuration)
-        let window: NSWindow? = windowed ? NSWindow(contentRect: view.frame, styleMask: [.titled], backing: .buffered, defer: false) : nil
-        window?.isReleasedWhenClosed = false
-        window?.contentView = view
-        window?.orderFront(nil)
-        defer { session.dispose(view); window?.close() }
+        let session = ModelPreviewSession(file: root.appendingPathComponent("assembly.3mf"), resources: app, snapshot: true)
+        let view = session.makeView(size: CGSize(width: 800, height: 600), configuration: configuration)
+        defer { session.dispose(view) }
         let deadline = ContinuousClock.now + .seconds(20)
         while session.state == "loading", ContinuousClock.now < deadline { try await Task.sleep(for: .milliseconds(50)) }
-        try await Task.sleep(for: .milliseconds(100))
-        let result = try await view.callAsyncJavaScript("""
-            const image = window.folioModelSnapshot?.();
-            const gl = document.querySelector('canvas').getContext('webgl2');
-            const pixel = new Uint8Array(4);
-            gl.readPixels(250, 250, 1, 1, gl.RGBA, gl.UNSIGNED_BYTE, pixel);
-            const debug = gl.getExtension('WEBGL_debug_renderer_info');
-            return {state:window.folioModelState, length:image?.length, pixel:[...pixel], events:window.contextEvents,
-                    lost:gl.isContextLost(), error:gl.getError(), buffer:[gl.drawingBufferWidth,gl.drawingBufferHeight],
-                    renderer:debug ? gl.getParameter(debug.UNMASKED_RENDERER_WEBGL) : gl.getParameter(gl.RENDERER)};
+        try require(session.state == "ready", session.failure ?? "The snapshot fixture timed out.")
+        let png = try await ModelSnapshot.capture(view, timeout: .seconds(5))
+        try require(hasModelPixels(png), "Native PNG capture must retain model pixels when WebKit serialization fails.")
+        try await verifyCaptureDeadline(in: view)
+        _ = try await view.callAsyncJavaScript("""
+            window.folioModelSnapshot = () => ({width:2, height:2,
+                rgba:btoa(String.fromCharCode(255,0,0,255, 0,255,0,255, 0,0,255,255, 255,255,0,255))});
             """, contentWorld: .page)
-        diagnostic("\(label): \(result ?? "nil")")
+        let corners = try await ModelSnapshot.capture(view, timeout: .seconds(5))
+        let bitmap = NSBitmapImageRep(data: corners)
+        let top = bitmap?.colorAt(x: 0, y: 0)?.usingColorSpace(.deviceRGB)
+        let bottom = bitmap?.colorAt(x: 0, y: 1)?.usingColorSpace(.deviceRGB)
+        try require(top?.blueComponent == 1 && bottom?.redComponent == 1, "Native PNG encoding must preserve RGBA channels and flip WebGL rows.")
+        _ = try await view.callAsyncJavaScript("window.folioModelSnapshot = () => ({width:2, height:2, rgba:'AAAA'})", contentWorld: .page)
+        var rejected = false
+        do { _ = try await ModelSnapshot.capture(view, timeout: .seconds(5)) } catch { rejected = true }
+        try require(rejected, "Native capture must reject an incomplete RGBA buffer.")
+    }
+
+    @MainActor
+    private static func verifyCaptureDeadline(in view: WKWebView) async throws {
+        _ = try await view.callAsyncJavaScript("""
+            window.originalSnapshot = window.folioModelSnapshot;
+            window.folioModelSnapshot = () => new Promise(resolve => {
+                window.releaseSnapshot = () => resolve(window.originalSnapshot());
+            });
+            """, contentWorld: .page)
+        for cancel in [false, true] {
+            let release = Task { @MainActor in
+                do { try await Task.sleep(for: .seconds(2)) } catch { return }
+                _ = try? await view.callAsyncJavaScript("window.releaseSnapshot?.()", contentWorld: .page)
+            }
+            let capture = Task { @MainActor in try await ModelSnapshot.capture(view, timeout: cancel ? .seconds(5) : .milliseconds(100)) }
+            if cancel { try await Task.sleep(for: .milliseconds(100)); capture.cancel() }
+            var rejected = false
+            do { _ = try await capture.value }
+            catch { rejected = cancel ? error is CancellationError : error.localizedDescription.contains("too long") }
+            release.cancel()
+            _ = try? await view.callAsyncJavaScript("window.releaseSnapshot?.()", contentWorld: .page)
+            try require(rejected, "Native capture must honor its deadline and cancellation while JavaScript remains pending.")
+        }
+        _ = try await view.callAsyncJavaScript("window.folioModelSnapshot = window.originalSnapshot", contentWorld: .page)
+    }
+
+    @MainActor
+    private static func verifyFirstFrameFailure(app: Bundle, root: URL) async throws {
+        let configuration = WKWebViewConfiguration()
+        configuration.userContentController.addUserScript(WKUserScript(source: """
+            window.heldFrames = [];
+            window.requestAnimationFrame = callback => window.heldFrames.push(callback);
+            window.cancelAnimationFrame = id => { window.heldFrames[id - 1] = undefined; };
+            """, injectionTime: .atDocumentStart, forMainFrameOnly: true))
+        let session = ModelPreviewSession(file: root.appendingPathComponent("cube.glb"), resources: app)
+        let view = session.makeView(size: CGSize(width: 600, height: 400), configuration: configuration)
+        defer { session.dispose(view) }
+        let deadline = ContinuousClock.now + .seconds(20)
+        var paused = false
+        while !paused, ContinuousClock.now < deadline {
+            paused = (try? await view.callAsyncJavaScript("return window.heldFrames?.length >= 2", contentWorld: .page)) as? Bool == true
+            if !paused { try await Task.sleep(for: .milliseconds(50)) }
+        }
+        try require(paused, "The model did not pause before its first frame.")
+        _ = try await view.callAsyncJavaScript("""
+            document.querySelector('canvas').dispatchEvent(new Event('webglcontextlost', {cancelable:true}));
+            for (const callback of window.heldFrames.splice(0)) callback?.(performance.now());
+            """, contentWorld: .page)
+        try await Task.sleep(for: .milliseconds(50))
+        let state = try await view.callAsyncJavaScript("return window.folioModelState.state", contentWorld: .page)
+        try require(state as? String == "error", "A late first frame must not overwrite a renderer failure: \(state ?? "nil")")
     }
 
     @MainActor
@@ -235,13 +276,14 @@ struct ModelPreviewCheck {
     }
 
     @MainActor
-    private static func verifyFirstFailure(app: Bundle, root: URL) async throws {
+    private static func verifyFirstFailure(app: Bundle) async throws {
+        let root = try scratchDirectory()
+        defer { try? FileManager.default.removeItem(at: root) }
         let file = root.appendingPathComponent("oversized-preview.stl")
         FileManager.default.createFile(atPath: file.path, contents: nil)
         let handle = try FileHandle(forWritingTo: file)
         try handle.truncate(atOffset: UInt64(ModelPreviewSession.maxBytes + 1))
         try handle.close()
-        defer { try? FileManager.default.removeItem(at: file) }
         let session = ModelPreviewSession(file: file, resources: app, snapshot: true)
         let view = session.makeView(size: CGSize(width: 600, height: 400))
         defer { session.dispose(view) }
@@ -258,29 +300,37 @@ struct ModelPreviewCheck {
 
     @MainActor
     private static func verifyAccess(root: URL) throws {
-        let session = ModelPreviewSession(file: root.appendingPathComponent("cube.gltf"))
+        let scratch = try scratchDirectory()
+        defer { try? FileManager.default.removeItem(at: scratch) }
+        let folder = scratch.appendingPathComponent("models", isDirectory: true)
+        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: false)
+        for name in ["cube.gltf", "cube.bin", "manifest.json"] {
+            try FileManager.default.copyItem(at: root.appendingPathComponent(name), to: folder.appendingPathComponent(name))
+        }
+        let session = ModelPreviewSession(file: folder.appendingPathComponent("cube.gltf"))
         _ = try session.resource(URL(string: "folio-model://preview/files/cube.bin")!)
-        let outside = root.deletingLastPathComponent().appendingPathComponent("outside-\(UUID()).bin")
+        let outside = scratch.appendingPathComponent("outside.bin")
         try Data([0]).write(to: outside)
-        let link = root.appendingPathComponent("escape-link.bin")
+        let link = folder.appendingPathComponent("escape-link.bin")
         try FileManager.default.createSymbolicLink(at: link, withDestinationURL: outside)
-        let large = root.appendingPathComponent("oversized.stl")
+        let large = folder.appendingPathComponent("oversized.stl")
         FileManager.default.createFile(atPath: large.path, contents: nil)
         let handle = try FileHandle(forWritingTo: large)
         try handle.truncate(atOffset: UInt64(ModelPreviewSession.maxBytes + 1))
         try handle.close()
-        defer {
-            try? FileManager.default.removeItem(at: outside)
-            try? FileManager.default.removeItem(at: link)
-            try? FileManager.default.removeItem(at: large)
-        }
-        for url in ["https://example.com/model.bin", "folio-model://preview/files/../outside.bin",
+        for url in ["https://example.com/model.bin", "folio-model://preview/files/../\(outside.lastPathComponent)",
                     "folio-model://preview/files/escape-link.bin", "folio-model://preview/files/oversized.stl",
                     "folio-model://preview/files/manifest.json"] {
             var rejected = false
             do { _ = try session.resource(URL(string: url)!) } catch { rejected = true }
             try require(rejected, "The model resource boundary accepted \(url).")
         }
+    }
+
+    private static func scratchDirectory() throws -> URL {
+        let folder = FileManager.default.temporaryDirectory.appendingPathComponent("folio-model-check-\(UUID())", isDirectory: true)
+        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: false)
+        return folder
     }
 
     private static func hasModelPixels(_ data: Data) -> Bool {

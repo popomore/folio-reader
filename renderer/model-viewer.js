@@ -121,7 +121,9 @@ window.folioLoadModel = async (url, name, scheme, colors, snapshot = false) => {
       await new Promise(requestAnimationFrame);
       render();
     }
-    report("ready", { meshes: parsed.meshes, triangles: parsed.triangles, dimensions, unit: parsed.unit });
+    if (!disposed && window.folioModelState.state !== "error") {
+      report("ready", { meshes: parsed.meshes, triangles: parsed.triangles, dimensions, unit: parsed.unit });
+    }
   } catch (error) {
     const message = error instanceof RangeError ? "This model is invalid or too large to preview."
       : error instanceof Error ? error.message : "This model could not be opened.";
@@ -133,7 +135,20 @@ window.folioLoadModel = async (url, name, scheme, colors, snapshot = false) => {
 window.folioModelSnapshot = () => {
   if (disposed) throw new Error("This 3D preview has closed.");
   render();
-  return canvas.toDataURL("image/png").split(",")[1];
+  const gl = renderer.getContext();
+  const width = gl.drawingBufferWidth, height = gl.drawingBufferHeight;
+  if (gl.isContextLost() || !width || !height || width * height > 4_194_304) {
+    throw new Error("The 3D preview could not be captured.");
+  }
+  // Read the rendered framebuffer directly; native code owns PNG encoding.
+  const pixels = new Uint8Array(width * height * 4);
+  gl.readPixels(0, 0, width, height, gl.RGBA, gl.UNSIGNED_BYTE, pixels);
+  if (gl.isContextLost() || gl.getError() !== gl.NO_ERROR) throw new Error("The 3D preview could not be captured.");
+  let binary = "";
+  for (let offset = 0; offset < pixels.length; offset += 0x8000) {
+    binary += String.fromCharCode(...pixels.subarray(offset, offset + 0x8000));
+  }
+  return { width, height, rgba: btoa(binary) };
 };
 window.folioModelReset = reset;
 window.folioModelViewState = () => ({
