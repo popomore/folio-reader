@@ -11,6 +11,12 @@ window.folioModelParserChecks = async () => {
   const colors = [];
   object.traverse((node) => { if (node.isMesh) colors.push([...node.geometry.getAttribute("color").array.slice(0, 4)]); });
   require(colors.length === 2 && colors[0][0] > colors[0][1] && colors[1][1] > colors[1][0], "Cross-file resource IDs or base colors were mixed up.");
+  const shearXML = modelXML(cubeXML() + '<object id="3"><components><component objectid="1" transform="1 0 0 1 1 0 0 0 1 0 0 0"/></components></object>',
+    '<item objectid="3" transform="1 0 0 0 1 0 1 0 1 0 0 0"/>');
+  const shear = parseThreeMF(threeMF({ "3D/3dmodel.model": shearXML }).buffer).object;
+  shear.updateMatrixWorld(true);
+  require(new Box3().setFromObject(shear).getSize(new Vector3()).toArray().join() === "60,20,20",
+    "3MF component and build shear matrices must survive world-matrix updates.");
   const inches = modelFixtures().find((file) => file.name === "inch.3mf");
   const inchModel = parseThreeMF(inches.data.buffer).object;
   require(Math.abs(new Box3().setFromObject(inchModel).getSize(new Vector3()).x - 508) < 0.001, "3MF physical units were lost.");

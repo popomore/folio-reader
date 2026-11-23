@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { Box3, Vector3 } from "three";
-import { localResourceURL, parseModel } from "./model-loader.js";
+import { Box3, BufferGeometry, Float32BufferAttribute, InstancedMesh, MeshStandardMaterial, Vector3 } from "three";
+import { inspectModel, localResourceURL, parseModel } from "./model-loader.js";
 import { modelFixtures } from "./model-fixtures.js";
 
 const base = "folio-model://preview/files/";
@@ -29,4 +29,22 @@ test("blocks remote, parent and other-origin model resources", () => {
 test("rejects empty and malformed models", async () => {
   await assert.rejects(parseModel(new ArrayBuffer(0), "empty.stl", base), /empty/);
   await assert.rejects(parseModel(new TextEncoder().encode("not a mesh").buffer, "broken.obj", base), /no viewable/);
+});
+
+test("preserves PLY surfaces after long header comments", async () => {
+  const fixture = modelFixtures().find((file) => file.name === "cube.ply");
+  const source = new TextDecoder().decode(fixture.data).replace("element vertex", `comment ${"metadata ".repeat(10_000)}\nelement vertex`);
+  const result = await parseModel(new TextEncoder().encode(source).buffer, "long-header.ply", base);
+  assert.ok(result.object.isMesh);
+  assert.equal(result.triangles, 12);
+});
+
+test("counts displayed instances and enforces their triangle budget", () => {
+  const geometry = new BufferGeometry();
+  geometry.setAttribute("position", new Float32BufferAttribute([0, 0, 0, 1, 0, 0, 0, 1, 0], 3));
+  geometry.setIndex(Array.from({ length: 9000 }, (_, i) => i % 3));
+  const instances = new InstancedMesh(geometry, new MeshStandardMaterial(), 1000);
+  assert.throws(() => inspectModel(instances), /too complex/);
+  instances.count = 3;
+  assert.deepEqual(inspectModel(instances), { meshes: 3, triangles: 9000, vertices: 9 });
 });

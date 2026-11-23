@@ -52,6 +52,8 @@ export function modelFixtures() {
   glbView.setUint32(24 + jsonLength, 0x004e4942, true);
   glb.set(bin, 28 + jsonLength);
   const assembly = modelXML('<object id="1"><components><component objectid="1" p:path="/3D/Objects/red.model"/><component objectid="1" p:path="/3D/Objects/green.model" transform="1 0 0 0 1 0 0 0 1 40 0 0"/></components></object>', '<item objectid="1" transform="1 0 0 0 1 0 0 0 1 0 10 0"/>');
+  const shear = modelXML(cubeXML() + '<object id="3"><components><component objectid="1" transform="1 0 0 1 1 0 0 0 1 0 0 0"/></components></object>',
+    '<item objectid="3" transform="1 0 0 0 1 0 1 0 1 0 0 0"/>');
   const files = [
     ["cube-ascii.stl", strToU8(ascii), 1, 12], ["cube-binary.STL", binarySTL, 1, 12],
     ["cube.obj", strToU8(obj), 1, 12], ["cube.ply", strToU8(ply), 1, 12],
@@ -63,6 +65,7 @@ export function modelFixtures() {
       "3D/Objects/green.model": modelXML(cubeXML("#2aa66c"), ""),
       "Metadata/plate_1.gcode": "G1 X10 Y10\n", "Metadata/project_settings.config": '{"printer_model":"fixture"}' }), 2, 24],
     ["inch.3mf", threeMF({ "3D/3dmodel.model": modelXML(cubeXML(), '<item objectid="1"/>', "inch") }), 1, 12],
+    ["shear.3mf", threeMF({ "3D/3dmodel.model": shear }), 1, 12],
     ["item-path.3mf", threeMF({ "3D/3dmodel.model": modelXML("", '<item p:path="/3D/Objects/part.model" objectid="1"/>'),
       "3D/Objects/part.model": modelXML(cubeXML(), "") }), 1, 12],
     ["sliced.gcode.3mf", threeMF({ "Metadata/plate_1.gcode": "G1 X10 Y10" }), 0, 0, "no model geometry"],

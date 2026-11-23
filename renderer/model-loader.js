@@ -46,9 +46,7 @@ export async function parseModel(buffer, name, base) {
       break;
     case "ply": {
       const geometry = new PLYLoader().parse(buffer);
-      const header = decoder.decode(buffer.slice(0, Math.min(buffer.byteLength, 64 * 1024))).split("end_header")[0];
-      const faces = /^element\s+face\s+[1-9]\d*\s*$/m.test(header);
-      object = faces ? mesh(geometry) : new Points(geometry, new PointsMaterial({
+      object = plyHasFaces(buffer) ? mesh(geometry) : new Points(geometry, new PointsMaterial({
         color: geometry.hasAttribute("color") ? 0xffffff : 0x6796ba,
         vertexColors: geometry.hasAttribute("color"), size: 2, sizeAttenuation: false,
       }));
@@ -71,6 +69,19 @@ export async function parseModel(buffer, name, base) {
   return { object, note, unit, ...stats };
 }
 
+function plyHasFaces(buffer) {
+  const bytes = new Uint8Array(buffer);
+  let start = 0, faces = false;
+  for (let end = 0; end < bytes.length; end++) {
+    if (bytes[end] !== 10 && bytes[end] !== 13) continue;
+    const line = decoder.decode(bytes.subarray(start, end)).trim();
+    if (line === "end_header") return faces;
+    if (/^element\s+face\s+[1-9]\d*$/.test(line)) faces = true;
+    start = end + 1;
+  }
+  throw new Error("The PLY header is incomplete.");
+}
+
 function mesh(geometry) {
   if (!geometry.hasAttribute("normal")) geometry.computeVertexNormals();
   const colored = geometry.hasAttribute("color");
@@ -84,12 +95,15 @@ export function inspectModel(object) {
   let meshes = 0, triangles = 0, vertices = 0;
   object.traverse((node) => {
     if (!node.isMesh && !node.isPoints && !node.isLine) return;
-    if (++meshes > 10_000) throw new Error("This model has too many parts to preview.");
+    const instances = node.isInstancedMesh ? node.count : 1;
+    if (!Number.isInteger(instances) || instances < 0) throw new Error("This model contains an invalid instance count.");
+    meshes += instances;
+    if (meshes > 10_000) throw new Error("This model has too many parts to preview.");
     const geometry = node.geometry;
     const positions = geometry.getAttribute("position");
     if (!positions) throw new Error("This model has no vertex positions.");
-    vertices += positions.count;
-    if (node.isMesh) triangles += (geometry.index?.count ?? positions.count) / 3;
+    vertices += positions.count * instances;
+    if (node.isMesh) triangles += (geometry.index?.count ?? positions.count) / 3 * instances;
     if (node.isMesh && (geometry.index?.count ?? positions.count) % 3 !== 0) {
       throw new Error("This model contains an incomplete triangle.");
     }
@@ -255,6 +269,7 @@ export function parseThreeMF(buffer) {
         assemblyNodes += object.userData.assemblyNodes;
         if (assemblyNodes > 10_000) throw new Error("This 3MF assembly has too many instances to preview.");
         object.applyMatrix4(transform(component, data.scale));
+        object.matrixAutoUpdate = false;
         group.add(object);
       }
     }
@@ -272,6 +287,7 @@ export function parseThreeMF(buffer) {
     assemblyNodes += instance.userData.assemblyNodes;
     if (assemblyNodes > 10_000) throw new Error("This 3MF build has too many instances to preview.");
     instance.applyMatrix4(transform(item, root.scale));
+    instance.matrixAutoUpdate = false;
     object.add(instance);
   }
   return { object, note: hasTextures

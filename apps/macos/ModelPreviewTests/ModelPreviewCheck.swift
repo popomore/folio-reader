@@ -59,6 +59,10 @@ struct ModelPreviewCheck {
                 let state = try await view.callAsyncJavaScript("return window.folioModelState", contentWorld: .page) as? [String: Any]
                 try require(state?["meshes"] as? Int == fixture.meshes && state?["triangles"] as? Int == fixture.triangles,
                             "Unexpected rendered geometry for \(fixture.name): \(state ?? [:])")
+                if fixture.name == "shear.3mf" {
+                    try require(state?["dimensions"] as? String == "60 × 20 × 20",
+                                "The rendered 3MF must preserve component and build shear transforms.")
+                }
                 if fixture.name == "assembly.3mf" {
                     _ = try await view.evaluateJavaScript(parserChecks)
                     let checks = try await view.callAsyncJavaScript("return await window.folioModelParserChecks()", contentWorld: .page)
