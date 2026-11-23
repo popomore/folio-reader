@@ -25,6 +25,42 @@
     <key>UTImportedTypeDeclarations</key>
     <array>
         <dict>
+            <key>UTTypeIdentifier</key><string>public.standard-tesselated-geometry-format</string>
+            <key>UTTypeDescription</key><string>STL Model</string>
+            <key>UTTypeConformsTo</key><array><string>public.3d-content</string><string>public.data</string></array>
+            <key>UTTypeTagSpecification</key><dict><key>public.filename-extension</key><array><string>stl</string></array></dict>
+        </dict>
+        <dict>
+            <key>UTTypeIdentifier</key><string>public.geometry-definition-format</string>
+            <key>UTTypeDescription</key><string>OBJ Model</string>
+            <key>UTTypeConformsTo</key><array><string>public.3d-content</string><string>public.data</string></array>
+            <key>UTTypeTagSpecification</key><dict><key>public.filename-extension</key><array><string>obj</string></array></dict>
+        </dict>
+        <dict>
+            <key>UTTypeIdentifier</key><string>public.polygon-file-format</string>
+            <key>UTTypeDescription</key><string>PLY Model</string>
+            <key>UTTypeConformsTo</key><array><string>public.3d-content</string><string>public.data</string></array>
+            <key>UTTypeTagSpecification</key><dict><key>public.filename-extension</key><array><string>ply</string></array></dict>
+        </dict>
+        <dict>
+            <key>UTTypeIdentifier</key><string>org.khronos.gltf</string>
+            <key>UTTypeDescription</key><string>glTF Model</string>
+            <key>UTTypeConformsTo</key><array><string>public.3d-content</string><string>public.data</string></array>
+            <key>UTTypeTagSpecification</key><dict><key>public.filename-extension</key><array><string>gltf</string></array></dict>
+        </dict>
+        <dict>
+            <key>UTTypeIdentifier</key><string>org.khronos.glb</string>
+            <key>UTTypeDescription</key><string>Binary glTF Model</string>
+            <key>UTTypeConformsTo</key><array><string>public.3d-content</string><string>public.data</string></array>
+            <key>UTTypeTagSpecification</key><dict><key>public.filename-extension</key><array><string>glb</string></array></dict>
+        </dict>
+        <dict>
+            <key>UTTypeIdentifier</key><string>org.3mfconsortium.3mf</string>
+            <key>UTTypeDescription</key><string>3MF Print Model</string>
+            <key>UTTypeConformsTo</key><array><string>public.3d-content</string><string>public.data</string></array>
+            <key>UTTypeTagSpecification</key><dict><key>public.filename-extension</key><array><string>3mf</string></array></dict>
+        </dict>
+        <dict>
             <key>UTTypeIdentifier</key><string>net.daringfireball.markdown</string>
             <key>UTTypeDescription</key><string>Markdown Document</string>
             <key>UTTypeConformsTo</key>
@@ -179,6 +215,15 @@
                 <string>public.image</string>
                 <string>public.audiovisual-content</string>
                 <string>public.comma-separated-values-text</string>
+                <string>public.standard-tesselated-geometry-format</string>
+                <string>public.geometry-definition-format</string>
+                <string>public.polygon-file-format</string>
+                <string>org.khronos.gltf</string>
+                <string>org.khronos.glb</string>
+                <string>org.3mfconsortium.3mf</string>
+                <string>com.bambulab.3mf</string>
+                <string>com.bambulab.gltf</string>
+                <string>com.bambulab.glb</string>
             </array>
         </dict>
     </array>

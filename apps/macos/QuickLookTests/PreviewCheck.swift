@@ -43,6 +43,8 @@ struct PreviewCheck {
             let file = root.appendingPathComponent("example.\(suffix)")
             try Data("Folio example\n".utf8).write(to: file)
             switch try PreviewProvider.content(at: file, resources: resources) {
+            case .model:
+                throw CoreError(message: "Unexpected 3D model routing for .\(suffix)")
             case .native(let returned):
                 try require(media.contains(suffix) && returned == file, "Unexpected system preview for .\(suffix)")
             case .html(let page, _):

@@ -12,3 +12,11 @@ await build({
   legalComments: "linked",
   define: { "process.env.NODE_ENV": '"production"' },
 });
+await build({
+  entryPoints: [fileURLToPath(new URL("./model-viewer.js", import.meta.url))],
+  bundle: true,
+  minify: true,
+  outfile: `${output}/model-viewer.js`,
+  target: "safari17",
+  legalComments: "linked",
+});

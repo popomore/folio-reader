@@ -109,6 +109,36 @@ fn svg_files_are_read_only_images() -> Result<(), Error> {
     Ok(())
 }
 
+#[test]
+fn models_are_read_only_even_when_the_format_is_text() -> Result<(), Error> {
+    let root = tempdir()?;
+    let workspace = Workspace::open(root.path())?;
+    for name in [
+        "part.STL",
+        "part.obj",
+        "scan.ply",
+        "scene.gltf",
+        "scene.glb",
+        "print.3MF",
+    ] {
+        fs::write(root.path().join(name), b"model fixture\0")?;
+        let document = workspace.read(name)?;
+        assert_eq!(document.kind, FileKind::Model, "{name}");
+        assert!(!document.kind.editable());
+        assert_eq!(document.bytes, 14);
+        assert!(
+            document.source.is_none() && document.revision.is_none() && document.preview.is_none()
+        );
+    }
+    assert!(
+        workspace
+            .list("")?
+            .iter()
+            .all(|entry| entry.kind == Some(FileKind::Model))
+    );
+    Ok(())
+}
+
 #[cfg(feature = "git")]
 #[test]
 fn file_history_and_staged_and_unstaged_patches() -> Result<(), Error> {
