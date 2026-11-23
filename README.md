@@ -33,7 +33,9 @@ the bundled colors.
 Open **STL, OBJ, PLY, glTF, GLB, and 3MF** files in a workspace or floating preview.
 Drag to rotate, scroll to zoom, and right-drag to pan. Use **Reset view** or **R**
 to fit the model and **Wireframe** or **W** to inspect its mesh. Finder Quick Look
-shows a still image of the model.
+shows a still image of self-contained models. If a glTF or GLB needs sibling
+buffers or textures, Quick Look reports that it must be opened in Folio; the
+workspace and floating preview can load those files from the model folder.
 
 3MF previews include mesh geometry, component and build transforms, physical
 units, base materials, vertex colors, and production-extension references to

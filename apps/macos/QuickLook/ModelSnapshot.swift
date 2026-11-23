@@ -6,7 +6,7 @@ enum ModelSnapshot {
     static func render(_ file: URL, resources: Bundle) async throws -> Data {
         let scoped = file.startAccessingSecurityScopedResource()
         defer { if scoped { file.stopAccessingSecurityScopedResource() } }
-        let session = ModelPreviewSession(file: file, resources: resources, snapshot: true)
+        let session = ModelPreviewSession(file: file, resources: resources, snapshot: true, allowsFolderResources: false)
         let view = session.makeView(size: PreviewProvider.previewSize)
         defer { session.dispose(view) }
         let deadline = ContinuousClock.now + .seconds(20)

@@ -92,6 +92,7 @@ function mesh(geometry) {
 }
 
 export function inspectModel(object) {
+  object.updateMatrixWorld(true);
   let meshes = 0, triangles = 0, vertices = 0;
   object.traverse((node) => {
     if (!node.isMesh && !node.isPoints && !node.isLine) return;
@@ -120,7 +121,7 @@ export function inspectModel(object) {
         if (!Number.isInteger(index) || index < 0 || index >= positions.count) throw new Error("This model contains an invalid face.");
       }
     }
-    for (const value of node.matrix.elements) {
+    for (const value of node.matrixWorld.elements) {
       if (!Number.isFinite(value)) throw new Error("This model contains an invalid transform.");
     }
   });

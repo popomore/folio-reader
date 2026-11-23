@@ -107,7 +107,8 @@ window.folioLoadModel = async (url, name, scheme, colors, snapshot = false) => {
     reset();
     window.folioModelAppearance(scheme, colors);
     const dimensions = [size.x, size.y, size.z].map((v) => Number(v.toPrecision(4))).join(" × ");
-    status.textContent = `${parsed.meshes.toLocaleString()} parts · ${parsed.triangles.toLocaleString()} triangles · ${dimensions} ${parsed.unit}`;
+    const countLabel = (count, label) => `${count.toLocaleString()} ${label}${count === 1 ? "" : "s"}`;
+    status.textContent = `${countLabel(parsed.meshes, "part")} · ${countLabel(parsed.triangles, "triangle")} · ${dimensions} ${parsed.unit}`;
     document.querySelector("#note").textContent = parsed.note;
     toolbar.hidden = false;
     canvas.hidden = false;

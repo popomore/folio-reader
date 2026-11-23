@@ -88,7 +88,78 @@ struct ModelPreviewCheck {
         let still = try await ModelSnapshot.render(root.appendingPathComponent("assembly.3mf"), resources: quicklook)
         try require(hasModelPixels(still), "Finder's snapshot must contain visible geometry.")
         try still.write(to: root.appendingPathComponent("quicklook-assembly.png"))
+        let checks: [(String, @MainActor () async throws -> Void)] = [
+            ("appearance during loading", { try await verifyLoadingAppearance(app: app, root: root) }),
+            ("first resource failure", { try await verifyFirstFailure(app: app, root: root) }),
+            ("Quick Look sibling-resource policy", {
+                var rejected = false
+                do { _ = try await ModelSnapshot.render(root.appendingPathComponent("cube.gltf"), resources: quicklook) }
+                catch { rejected = error.localizedDescription.contains("self-contained") }
+                try require(rejected, "Finder must explicitly reject glTF dependencies outside the selected file.")
+            }),
+        ]
+        var failures: [String] = []
+        for (name, check) in checks {
+            do { try await check(); print("Verified \(name)") }
+            catch { failures.append("\(name): \(error.localizedDescription)") }
+        }
+        try require(failures.isEmpty, failures.joined(separator: "\n"))
         print("Verified \(fixtures.count) model fixtures, offline resource boundaries, WebGL controls and Finder snapshot.")
+    }
+
+    @MainActor
+    private static func verifyLoadingAppearance(app: Bundle, root: URL) async throws {
+        let configuration = WKWebViewConfiguration()
+        configuration.userContentController.addUserScript(WKUserScript(source: """
+            let modelLoader;
+            Object.defineProperty(window, 'folioLoadModel', {
+                get() { return modelLoader; },
+                set(loader) {
+                    modelLoader = async (...args) => {
+                        await new Promise(resolve => { window.releaseModel = resolve; });
+                        return loader(...args);
+                    };
+                }
+            });
+            """, injectionTime: .atDocumentStart, forMainFrameOnly: true))
+        let session = ModelPreviewSession(file: root.appendingPathComponent("cube.glb"), resources: app, snapshot: true)
+        let view = session.makeView(size: CGSize(width: 600, height: 400), configuration: configuration)
+        defer { session.dispose(view) }
+        let deadline = ContinuousClock.now + .seconds(20)
+        var paused = false
+        while !paused, ContinuousClock.now < deadline {
+            paused = (try? await view.callAsyncJavaScript("return typeof window.releaseModel === 'function'", contentWorld: .page)) as? Bool == true
+            if !paused { try await Task.sleep(for: .milliseconds(50)) }
+        }
+        try require(paused, "The loading fixture did not reach its controlled pause.")
+        session.appearance("dark", colors: ["--paper": "#123456"], in: view)
+        _ = try await view.callAsyncJavaScript("window.releaseModel()", contentWorld: .page)
+        while session.state == "loading", ContinuousClock.now < deadline { try await Task.sleep(for: .milliseconds(50)) }
+        try require(session.state == "ready", session.failure ?? "The appearance fixture timed out.")
+        let actual = try await view.callAsyncJavaScript("return document.documentElement.dataset.colorScheme + '|' + getComputedStyle(document.documentElement).getPropertyValue('--paper').trim()", contentWorld: .page)
+        try require(actual as? String == "dark|#123456", "The latest appearance was lost during model loading: \(actual ?? "nil")")
+    }
+
+    @MainActor
+    private static func verifyFirstFailure(app: Bundle, root: URL) async throws {
+        let file = root.appendingPathComponent("oversized-preview.stl")
+        FileManager.default.createFile(atPath: file.path, contents: nil)
+        let handle = try FileHandle(forWritingTo: file)
+        try handle.truncate(atOffset: UInt64(ModelPreviewSession.maxBytes + 1))
+        try handle.close()
+        defer { try? FileManager.default.removeItem(at: file) }
+        let session = ModelPreviewSession(file: file, resources: app, snapshot: true)
+        let view = session.makeView(size: CGSize(width: 600, height: 400))
+        defer { session.dispose(view) }
+        let deadline = ContinuousClock.now + .seconds(20)
+        var javascriptFailed = false
+        while !javascriptFailed, ContinuousClock.now < deadline {
+            javascriptFailed = (try? await view.callAsyncJavaScript("return window.folioModelState?.state === 'error'", contentWorld: .page)) as? Bool == true
+            if !javascriptFailed { try await Task.sleep(for: .milliseconds(50)) }
+        }
+        try require(javascriptFailed, "The oversized fixture did not finish reporting its error.")
+        try await Task.sleep(for: .milliseconds(50))
+        try require(session.failure?.contains("128 MiB") == true, "The specific resource error was overwritten: \(session.failure ?? "nil")")
     }
 
     @MainActor

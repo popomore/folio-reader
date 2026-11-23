@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { Box3, BufferGeometry, Float32BufferAttribute, InstancedMesh, MeshStandardMaterial, Vector3 } from "three";
+import { Box3, BufferGeometry, Float32BufferAttribute, Group, InstancedMesh, Mesh, MeshStandardMaterial, Vector3 } from "three";
 import { inspectModel, localResourceURL, parseModel } from "./model-loader.js";
 import { modelFixtures } from "./model-fixtures.js";
 
@@ -47,4 +47,13 @@ test("counts displayed instances and enforces their triangle budget", () => {
   assert.throws(() => inspectModel(instances), /too complex/);
   instances.count = 3;
   assert.deepEqual(inspectModel(instances), { meshes: 3, triangles: 9000, vertices: 9 });
+});
+
+test("rejects non-finite transforms inherited from parent groups", () => {
+  const geometry = new BufferGeometry();
+  geometry.setAttribute("position", new Float32BufferAttribute([0, 0, 0, 1, 0, 0, 0, 1, 0], 3));
+  const parent = new Group();
+  parent.position.x = Infinity;
+  parent.add(new Mesh(geometry, new MeshStandardMaterial()));
+  assert.throws(() => inspectModel(parent), /invalid transform/);
 });

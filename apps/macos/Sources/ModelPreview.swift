@@ -9,6 +9,7 @@ final class ModelPreviewSession: NSObject, WKURLSchemeHandler, WKNavigationDeleg
     let file: URL
     private let resources: Bundle
     private let snapshot: Bool
+    private let allowsFolderResources: Bool
     private let changed: (String, String?) -> Void
     private var bytesRead = 0
     private var scheme = "light"
@@ -16,16 +17,16 @@ final class ModelPreviewSession: NSObject, WKURLSchemeHandler, WKNavigationDeleg
     private(set) var state = "loading"
     private(set) var failure: String?
 
-    init(file: URL, resources: Bundle = .main, snapshot: Bool = false,
+    init(file: URL, resources: Bundle = .main, snapshot: Bool = false, allowsFolderResources: Bool = true,
          changed: @escaping (String, String?) -> Void = { _, _ in }) {
         self.file = file.resolvingSymlinksInPath().standardizedFileURL
         self.resources = resources
         self.snapshot = snapshot
+        self.allowsFolderResources = allowsFolderResources
         self.changed = changed
     }
 
-    func makeView(size: CGSize = .zero) -> WKWebView {
-        let configuration = WKWebViewConfiguration()
+    func makeView(size: CGSize = .zero, configuration: WKWebViewConfiguration = WKWebViewConfiguration()) -> WKWebView {
         configuration.websiteDataStore = .nonPersistent()
         configuration.setURLSchemeHandler(self, forURLScheme: "folio-model")
         configuration.userContentController.add(self, name: "folioModel")
@@ -39,10 +40,12 @@ final class ModelPreviewSession: NSObject, WKURLSchemeHandler, WKNavigationDeleg
         guard self.scheme != scheme || self.colors != colors else { return }
         self.scheme = scheme
         self.colors = colors
-        if state == "ready" {
-            view.callAsyncJavaScript("window.folioModelAppearance(scheme, colors)",
-                                     arguments: ["scheme": scheme, "colors": colors], in: nil, in: .page)
-        }
+        if state == "ready" { applyAppearance(in: view) }
+    }
+
+    private func applyAppearance(in view: WKWebView) {
+        view.callAsyncJavaScript("window.folioModelAppearance(scheme, colors)",
+                                 arguments: ["scheme": scheme, "colors": colors], in: nil, in: .page)
     }
 
     func resource(_ url: URL) throws -> (Data, String) {
@@ -57,6 +60,9 @@ final class ModelPreviewSession: NSObject, WKURLSchemeHandler, WKNavigationDeleg
         }
         guard url.path.hasPrefix("/files/") else { throw URLError(.noPermissionsToReadFile) }
         let relative = String(url.path.dropFirst("/files/".count))
+        if !allowsFolderResources, relative != file.lastPathComponent {
+            throw CoreError(message: "Finder Quick Look only previews self-contained models. Open this model in Folio to load files from its folder.")
+        }
         let root = file.deletingLastPathComponent()
         let allowed = ["stl", "obj", "ply", "gltf", "glb", "3mf", "bin", "png", "jpg", "jpeg", "webp", "avif"]
         guard let target = Core.file(relative, in: root), allowed.contains(target.pathExtension.lowercased()) else {
@@ -128,11 +134,13 @@ final class ModelPreviewSession: NSObject, WKURLSchemeHandler, WKNavigationDeleg
         if state == "error" { fail(body["message"] as? String ?? "This model could not be opened.") }
         else if state == "ready", failure == nil {
             self.state = "ready"
+            if let view = message.webView { applyAppearance(in: view) }
             changed("ready", nil)
         }
     }
 
     private func fail(_ message: String) {
+        guard failure == nil else { return }
         failure = message
         state = "error"
         changed("error", message)
