@@ -18,6 +18,7 @@ struct ArchiveCheck {
         throw CoreError(message: "Expected rejection of \(file.lastPathComponent)")
     }
 
+    @MainActor
     static func main() async throws {
         guard CommandLine.arguments.count == 3,
               let app = Bundle(path: CommandLine.arguments[1]),
@@ -110,8 +111,7 @@ struct ArchiveCheck {
         try reject(root.appendingPathComponent("example.zip"), limits: limits, containing: "too long")
         try verifyQuickLook(root.appendingPathComponent("html-name.zip"), app: app, resources: resources, expected: "&lt;img src=x onerror=alert(1)&gt;.md")
         try verifyQuickLook(root.appendingPathComponent("listing.zip"), app: app, resources: resources, expected: "Showing the first 500 entries")
-        let cancelled = Task {
-            try Task.checkCancellation()
+        let cancelled = Task { @MainActor in
             return try ArchiveContents.open(root.appendingPathComponent("example.zip"))
         }
         cancelled.cancel()
