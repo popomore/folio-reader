@@ -6,6 +6,7 @@ import { OrbitControls } from "three/addons/controls/OrbitControls.js";
 import { MAX_MODEL_BYTES, parseModel } from "./model-loader.js";
 
 let renderer, scene, camera, controls, model, bounds, frame;
+let disposed = false;
 const canvas = document.querySelector("canvas");
 const status = document.querySelector("#status");
 const toolbar = document.querySelector("nav");
@@ -18,15 +19,16 @@ function report(state, detail = {}) {
 
 function render() {
   frame = undefined;
-  renderer?.render(scene, camera);
+  if (!disposed) renderer?.render(scene, camera);
 }
 
 function invalidate() {
+  if (disposed) return;
   if (frame === undefined) frame = requestAnimationFrame(render);
 }
 
 function resize() {
-  if (!renderer) return;
+  if (!renderer || disposed) return;
   const { width, height } = canvas.getBoundingClientRect();
   renderer.setSize(Math.max(1, width), Math.max(1, height), false);
   camera.aspect = Math.max(1, width) / Math.max(1, height);
@@ -35,7 +37,7 @@ function resize() {
 }
 
 function reset() {
-  if (!bounds) return;
+  if (!bounds || disposed) return;
   const { radius } = bounds.getBoundingSphere(new Sphere());
   const halfFov = camera.fov * Math.PI / 360;
   const distance = radius / Math.sin(Math.min(halfFov, Math.atan(Math.tan(halfFov) * camera.aspect))) * 1.15;
@@ -76,6 +78,7 @@ window.folioLoadModel = async (url, name, scheme, colors, snapshot = false) => {
     if (!response.ok) throw new Error("The model file could not be read.");
     if (Number(response.headers.get("Content-Length")) > MAX_MODEL_BYTES) throw new Error("This model exceeds the 128 MiB preview limit.");
     const parsed = await parseModel(await response.arrayBuffer(), name, new URL(".", url).href);
+    if (disposed) return;
     model = parsed.object;
     scene = new Scene();
     const originalBounds = new Box3().setFromObject(model);
@@ -128,15 +131,20 @@ window.folioLoadModel = async (url, name, scheme, colors, snapshot = false) => {
 };
 
 window.folioModelSnapshot = () => {
+  if (disposed) throw new Error("This 3D preview has closed.");
   render();
   return canvas.toDataURL("image/png").split(",")[1];
 };
 window.folioModelReset = reset;
 window.folioModelViewState = () => ({
   position: camera.position.toArray(), target: controls.target.toArray(),
-  aspect: camera.aspect, near: camera.near, far: camera.far,
+  aspect: camera.aspect, near: camera.near, far: camera.far, disposed,
 });
 window.folioModelDispose = () => {
+  // The native host owns the renderer's lifetime, including hidden previews.
+  if (disposed) return;
+  disposed = true;
+  resizeObserver.disconnect();
   if (frame !== undefined) cancelAnimationFrame(frame);
   controls?.dispose();
   const geometries = new Set(), materials = new Set(), textures = new Set();
@@ -149,7 +157,6 @@ window.folioModelDispose = () => {
   });
   for (const value of [...textures, ...materials, ...geometries]) value.dispose();
   renderer?.dispose();
-  renderer?.forceContextLoss();
 };
 
 document.querySelector("#reset").addEventListener("click", reset);
@@ -165,6 +172,8 @@ canvas.addEventListener("keydown", (event) => {
   } else return;
   event.preventDefault();
 });
-canvas.addEventListener("webglcontextlost", () => report("error", { message: "The 3D renderer stopped. Reload the file to try again." }));
-new ResizeObserver(resize).observe(canvas);
-window.addEventListener("pagehide", window.folioModelDispose, { once: true });
+canvas.addEventListener("webglcontextlost", (event) => {
+  if (!disposed) report("error", { message: "The 3D renderer stopped. Reload the file to try again.", contextReason: event.statusMessage });
+});
+const resizeObserver = new ResizeObserver(resize);
+resizeObserver.observe(canvas);

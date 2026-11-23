@@ -67,6 +67,9 @@ struct ModelPreviewCheck {
                     _ = try await view.evaluateJavaScript(parserChecks)
                     let checks = try await view.callAsyncJavaScript("return await window.folioModelParserChecks()", contentWorld: .page)
                     print(checks ?? "")
+                    _ = try await view.callAsyncJavaScript("window.dispatchEvent(new PageTransitionEvent('pagehide'))", contentWorld: .page)
+                    try await Task.sleep(for: .milliseconds(100))
+                    try require(session.state == "ready", "A retained native preview must not destroy its renderer on pagehide: \(session.failure ?? session.state)")
                     let wireframe = try await view.callAsyncJavaScript("document.querySelector('#wireframe').click(); return document.querySelector('#wireframe').getAttribute('aria-pressed')", contentWorld: .page)
                     try require(wireframe as? String == "true", "The wireframe control did not toggle.")
                     _ = try await view.callAsyncJavaScript("document.querySelector('#wireframe').click()", contentWorld: .page)
@@ -123,6 +126,8 @@ struct ModelPreviewCheck {
                     let encoded = try await view.callAsyncJavaScript("return window.folioModelSnapshot()", contentWorld: .page) as? String
                     try require(encoded.flatMap { Data(base64Encoded: $0) }.map(hasModelPixels) == true,
                                 "The WebGL canvas did not contain rendered geometry.")
+                    let disposed = try await view.callAsyncJavaScript("window.folioModelDispose(); window.folioModelDispose(); return window.folioModelViewState().disposed", contentWorld: .page)
+                    try require(disposed as? Bool == true, "Explicit native renderer cleanup must be idempotent.")
                 }
             }
             print("Verified \(fixture.name): \(session.state)")
