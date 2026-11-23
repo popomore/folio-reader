@@ -72,20 +72,50 @@ struct ModelPreviewCheck {
                     _ = try await view.callAsyncJavaScript("document.querySelector('#wireframe').click()", contentWorld: .page)
                     view.setFrameSize(CGSize(width: 500, height: 700))
                     try await Task.sleep(for: .milliseconds(100))
-                    let zoomAndReset = try await view.callAsyncJavaScript("""
-                        // Keep the baseline and assertions in one task after viewport changes.
+                    _ = try await view.callAsyncJavaScript("""
                         document.querySelector('#reset').click();
-                        const beforeState = window.folioModelViewState();
-                        const before = window.folioModelSnapshot();
+                        window.folioModelSnapshot();
+                        """, contentWorld: .page)
+                    try await Task.sleep(for: .milliseconds(50))
+                    _ = try await view.callAsyncJavaScript("""
+                        window.folioControlBefore = {state: window.folioModelViewState(), image: window.folioModelSnapshot()};
                         document.querySelector('canvas').dispatchEvent(new KeyboardEvent('keydown', {key: '+'}));
-                        const zoomState = window.folioModelViewState();
-                        const zoomed = window.folioModelSnapshot();
+                        window.folioModelSnapshot();
+                        """, contentWorld: .page)
+                    try await Task.sleep(for: .milliseconds(50))
+                    _ = try await view.callAsyncJavaScript("""
+                        window.folioControlZoom = {state: window.folioModelViewState(), image: window.folioModelSnapshot()};
                         document.querySelector('#reset').click();
+                        window.folioModelSnapshot();
+                        """, contentWorld: .page)
+                    try await Task.sleep(for: .milliseconds(50))
+                    let zoomAndReset = try await view.callAsyncJavaScript("""
+                        const beforeState = window.folioControlBefore.state;
+                        const zoomState = window.folioControlZoom.state;
                         const resetState = window.folioModelViewState();
+                        const zoomChanged = window.folioControlBefore.image !== window.folioControlZoom.image;
                         const values = (state) => [...state.position, ...state.target, state.aspect, state.near, state.far];
                         const resetRestored = values(beforeState).every((value, i) => Math.abs(value - values(resetState)[i]) < 1e-8);
                         const cameraMoved = beforeState.position.some((value, i) => Math.abs(value - zoomState.position[i]) > 1e-6);
-                        return {zoomChanged: before !== zoomed, cameraMoved, resetRestored, beforeState, zoomState, resetState};
+                        let gpu;
+                        if (!zoomChanged) {
+                            const canvas = document.querySelector('canvas');
+                            const gl = canvas.getContext('webgl2');
+                            const colors = new Set();
+                            if (gl) {
+                                const pixel = new Uint8Array(4);
+                                for (let x = 1; x <= 5; x++) for (let y = 1; y <= 5; y++) {
+                                    gl.readPixels(Math.floor(gl.drawingBufferWidth * x / 6), Math.floor(gl.drawingBufferHeight * y / 6),
+                                                  1, 1, gl.RGBA, gl.UNSIGNED_BYTE, pixel);
+                                    colors.add([...pixel].join(','));
+                                }
+                            }
+                            gpu = {lost: gl?.isContextLost(), error: gl?.getError(), attributes: gl?.getContextAttributes(),
+                                   pixels: [...colors], width: canvas.width, height: canvas.height,
+                                   beforeLength: window.folioControlBefore.image.length, zoomLength: window.folioControlZoom.image.length,
+                                   modelState: window.folioModelState};
+                        }
+                        return {zoomChanged, cameraMoved, resetRestored, beforeState, zoomState, resetState, gpu};
                         """, contentWorld: .page) as? [String: Any]
                     try require(zoomAndReset?["zoomChanged"] as? Bool == true && zoomAndReset?["cameraMoved"] as? Bool == true &&
                                 zoomAndReset?["resetRestored"] as? Bool == true,
