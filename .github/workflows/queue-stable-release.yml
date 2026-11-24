@@ -1,0 +1,33 @@
+name: Queue stable Folio release
+
+on:
+  workflow_run:
+    workflows: [Folio CI]
+    types: [completed]
+    branches: [release]
+
+permissions: {}
+
+jobs:
+  dispatch:
+    if: >-
+      !github.event.repository.private &&
+      github.event.workflow_run.event == 'push' &&
+      github.event.workflow_run.conclusion == 'success' &&
+      github.event.workflow_run.head_repository.full_name == github.repository
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      actions: write
+    steps:
+      # workflow_run executes default-branch code, never a PR head or its artifacts.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.workflow_sha }}
+          persist-credentials: false
+      - name: Verify the successful push and dispatch its release branch
+        env:
+          GH_TOKEN: ${{ github.token }}
+          CI_RUN_ID: ${{ github.event.workflow_run.id }}
+        run: python3 scripts/release-source.py "$CI_RUN_ID" --dispatch

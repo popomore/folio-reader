@@ -10,18 +10,61 @@ Run `scripts/prepare-update-qa` and use the directory printed on the last line. 
 
 ## Release notes
 
-Write release notes in English. The release workflow uses `.release/notes.txt`
-for stable releases and `.release/preview-notes.txt` for previews. The selected
-file supplies both the GitHub Release description and the notes embedded in the
-signed Sparkle appcast. Update the relevant file before creating a release.
+Write commit subjects and release notes in English. Automatic stable releases
+generate their notes from conventional commits, using the same semantic-release
+packages as MusicX. `fix:` increments the patch, `feat:` increments the minor,
+and `!` or a `BREAKING CHANGE:` footer increments the major. Documentation and
+maintenance commits alone do not release. Without an existing stable tag, the
+first version is `1.0.0`. The app version comes from the release plan and tag;
+Cargo package versions are independent.
 
-## Publish a stable release
+The generated notes supply both the GitHub Release description and the signed
+Sparkle appcast. Previews continue to use `.release/preview-notes.txt`. Manual
+stable tag releases use `.release/notes.txt`.
+
+## Automatic stable releases
+
+Folio follows MusicX's branch policy: `main` publishes previews and `release`
+publishes stable builds. To enable stable automation, a maintainer must first
+create `release` from a tested `main` commit and allow the `release` branch in
+the `folio-macos-release` environment. This change does not create that branch
+or alter environment protection rules. Keep the existing signing settings below
+and enable immutable GitHub releases. No personal access token is needed.
+
+After reviewed changes reach `main` and pass Folio CI, fast-forward `release`
+to the selected `main` commit. Do not add release-only commits: the source must
+remain reachable from `origin/main`. Folio CI tests the release branch, including
+the release automation tests. Its completed successful push run queues the
+stable workflow on that exact branch. PR runs, forks, failed runs, other
+workflows, and stale branch tips cannot start a new release.
+
+The stable workflow saves the semantic version, English notes, source SHA, and
+CI run ID as a release plan. If no release is needed, it skips signing and
+publication. Otherwise it signs and notarizes the app and DMG, signs the Sparkle
+update, and records the package hashes against the original plan. Only after
+those packages have been retained does it create `vX.Y.Z`, stage the release,
+verify the public downloads, and update Latest. Existing preview tag formats,
+bundle identities, and update channels remain compatible.
+
+Re-run the original stable workflow after an interruption. It retains its plan
+and signed packages for 90 days and verifies their provenance and hashes on
+retry. An existing tag must still point to the planned source; publication can
+resume with the original bytes, including after a newer push. Missing or expired
+artifacts and conflicting tags require recovery; the workflow never moves a tag
+or rebuilds a published version. For a manual retry entry point, dispatch
+`release-stable.yml` on `release` with the successful Folio CI `ci-run-id`.
+Use the original run when its tag or signed packages already exist.
+
+## Manual stable tag releases
 
 1. Use a clean checkout of `origin/main` with passing Folio CI. Update `.release/notes.txt` for the release.
 2. Create a new `vX.Y.Z` tag on that commit and push it when publication is authorized. The workflow uses the tag as the release version.
 3. Verify the GitHub release, Apple Silicon DMG, Sparkle ZIP, and signed public appcast. The stable release becomes Latest.
 
-A manual workflow run checks a tag and builds a local update fixture. A tag push to the public repository publishes. The distribution job uses the repository's workflow token, and the repository must have immutable releases enabled.
+A manual run of `release-macos.yml` checks a tag and builds a local update
+fixture. An explicitly authorized tag push to the public repository publishes.
+This remains available for existing tag-based releases; use automatic stable
+releases for normal promotion. Both workflows use the repository workflow token.
 
 Configure the following in the `folio-macos-release` environment:
 

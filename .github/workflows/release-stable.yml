@@ -1,0 +1,189 @@
+name: Release stable Folio for macOS
+
+on:
+  workflow_dispatch:
+    inputs:
+      ci-run-id:
+        description: Successful Folio CI push run for the release branch
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: folio-macos-release
+  cancel-in-progress: false
+
+env:
+  CI_RUN_ID: ${{ inputs.ci-run-id }}
+  RELEASE_PLAN: target/release-plan/plan.json
+  RELEASE_ARTIFACTS: dist
+  FOLIO_RELEASE_REPOSITORY: ${{ github.repository }}
+
+jobs:
+  plan:
+    if: ${{ !github.event.repository.private && github.ref == 'refs/heads/release' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write
+      actions: read
+    outputs:
+      source-sha: ${{ steps.source.outputs.source-sha }}
+      release: ${{ steps.plan.outputs.release }}
+      tag: ${{ steps.plan.outputs.tag }}
+      version: ${{ steps.plan.outputs.version }}
+    steps:
+      # Validate the exact push run before checking out its tested source.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.workflow_sha }}
+          persist-credentials: false
+      - name: Verify successful CI provenance
+        id: source
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python3 scripts/release-source.py "$CI_RUN_ID"
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ steps.source.outputs.source-sha }}
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version-file: .node-version
+          package-manager-cache: false
+      - run: npm ci --ignore-scripts --no-audit --no-fund
+      - name: Find the original release plan
+        id: saved
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python3 scripts/find-release-artifact.py folio-stable-release-plan
+      - if: steps.saved.outputs.exists == 'true'
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          artifact-ids: ${{ steps.saved.outputs.id }}
+          path: target/release-plan
+      - name: Plan the semantic version and English notes
+        id: plan
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SOURCE_SHA: ${{ steps.source.outputs.source-sha }}
+        run: node scripts/semantic-release/run.mjs plan
+      - if: steps.saved.outputs.exists != 'true'
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: folio-stable-release-plan
+          path: target/release-plan/plan.json
+          if-no-files-found: error
+          retention-days: 90
+
+  build:
+    needs: plan
+    if: needs.plan.outputs.release == 'true'
+    runs-on: xcode-27
+    timeout-minutes: 80
+    environment: folio-macos-release
+    permissions:
+      contents: read
+      actions: read
+    env:
+      DEVELOPER_DIR: /Applications/Xcode_27.2.app/Contents/Developer
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ needs.plan.outputs.source-sha }}
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version-file: .node-version
+          package-manager-cache: false
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: folio-stable-release-plan
+          path: target/release-plan
+      - name: Read the original version and notes
+        run: node scripts/semantic-release/artifacts.mjs env
+      - name: Find the original signed packages
+        id: saved
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python3 scripts/find-release-artifact.py folio-stable-signed-packages
+      - if: steps.saved.outputs.exists == 'true'
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          artifact-ids: ${{ steps.saved.outputs.id }}
+          path: dist
+      - name: Refuse to rebuild an existing tag
+        if: steps.saved.outputs.exists != 'true'
+        run: |
+          test -z "$(git ls-remote --tags origin "refs/tags/$FOLIO_TAG")" || {
+            echo '::error::Recover the original signed packages instead of rebuilding an existing tag.'
+            exit 1
+          }
+      - if: steps.saved.outputs.exists != 'true'
+        name: Install the pinned Rust toolchain
+        run: rustup toolchain install --no-self-update
+      - if: steps.saved.outputs.exists != 'true'
+        name: Sign and notarize the planned stable release
+        env:
+          FOLIO_APPLE_CERTIFICATE: ${{ secrets.FOLIO_APPLE_CERTIFICATE }}
+          FOLIO_APPLE_CERTIFICATE_PASSWORD: ${{ secrets.FOLIO_APPLE_CERTIFICATE_PASSWORD }}
+          FOLIO_APPLE_NOTARY_KEY: ${{ secrets.FOLIO_APPLE_NOTARY_KEY }}
+          FOLIO_APPLE_NOTARY_KEY_ID: ${{ secrets.FOLIO_APPLE_NOTARY_KEY_ID }}
+          FOLIO_APPLE_NOTARY_ISSUER: ${{ secrets.FOLIO_APPLE_NOTARY_ISSUER }}
+          FOLIO_UPDATE_PRIVATE_KEY: ${{ secrets.FOLIO_UPDATE_PRIVATE_KEY }}
+          FOLIO_UPDATE_PUBLIC_KEY: ${{ vars.FOLIO_UPDATE_PUBLIC_KEY }}
+        run: bash scripts/sign-macos-release
+      - if: steps.saved.outputs.exists != 'true'
+        name: Bind signed packages to the original plan
+        run: node scripts/semantic-release/artifacts.mjs record
+      - name: Verify the retained packages
+        run: node scripts/semantic-release/artifacts.mjs verify
+      - if: steps.saved.outputs.exists != 'true'
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: folio-stable-signed-packages
+          path: |
+            dist/Folio-*.zip
+            dist/Folio-*.dmg
+            dist/appcast.xml
+            dist/validated-artifacts.json
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 90
+
+  publish:
+    needs: [plan, build]
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: write
+      actions: read
+    env:
+      SOURCE_SHA: ${{ needs.plan.outputs.source-sha }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ needs.plan.outputs.source-sha }}
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version-file: .node-version
+          package-manager-cache: false
+      - run: npm ci --ignore-scripts --no-audit --no-fund
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: folio-stable-release-plan
+          path: target/release-plan
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: folio-stable-signed-packages
+          path: dist
+      - name: Tag and publish the verified packages
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: node scripts/semantic-release/run.mjs publish
