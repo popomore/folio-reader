@@ -25,6 +25,66 @@
     <key>UTImportedTypeDeclarations</key>
     <array>
         <dict>
+            <key>UTTypeIdentifier</key><string>public.zip-archive</string>
+            <key>UTTypeDescription</key><string>ZIP Archive</string>
+            <key>UTTypeConformsTo</key><array><string>public.archive</string></array>
+            <key>UTTypeTagSpecification</key><dict><key>public.filename-extension</key><array><string>zip</string></array></dict>
+        </dict>
+        <dict>
+            <key>UTTypeIdentifier</key><string>public.tar-archive</string>
+            <key>UTTypeDescription</key><string>TAR Archive</string>
+            <key>UTTypeConformsTo</key><array><string>public.archive</string></array>
+            <key>UTTypeTagSpecification</key><dict><key>public.filename-extension</key><array><string>tar</string></array></dict>
+        </dict>
+        <dict>
+            <key>UTTypeIdentifier</key><string>org.gnu.gnu-zip-archive</string>
+            <key>UTTypeDescription</key><string>Gzip Archive</string>
+            <key>UTTypeConformsTo</key><array><string>public.archive</string></array>
+            <key>UTTypeTagSpecification</key><dict><key>public.filename-extension</key><array><string>gz</string></array></dict>
+        </dict>
+        <dict>
+            <key>UTTypeIdentifier</key><string>org.gnu.gnu-zip-tar-archive</string>
+            <key>UTTypeDescription</key><string>Gzipped TAR Archive</string>
+            <key>UTTypeConformsTo</key><array><string>public.archive</string></array>
+            <key>UTTypeTagSpecification</key><dict><key>public.filename-extension</key><array><string>tgz</string></array></dict>
+        </dict>
+        <dict>
+            <key>UTTypeIdentifier</key><string>public.bzip2-archive</string>
+            <key>UTTypeDescription</key><string>Bzip2 Archive</string>
+            <key>UTTypeConformsTo</key><array><string>public.archive</string></array>
+            <key>UTTypeTagSpecification</key><dict><key>public.filename-extension</key><array><string>bz2</string></array></dict>
+        </dict>
+        <dict>
+            <key>UTTypeIdentifier</key><string>public.tar-bzip2-archive</string>
+            <key>UTTypeDescription</key><string>Bzip2 TAR Archive</string>
+            <key>UTTypeConformsTo</key><array><string>public.archive</string></array>
+            <key>UTTypeTagSpecification</key><dict><key>public.filename-extension</key><array><string>tbz</string><string>tbz2</string></array></dict>
+        </dict>
+        <dict>
+            <key>UTTypeIdentifier</key><string>org.tukaani.xz-archive</string>
+            <key>UTTypeDescription</key><string>XZ Archive</string>
+            <key>UTTypeConformsTo</key><array><string>public.archive</string></array>
+            <key>UTTypeTagSpecification</key><dict><key>public.filename-extension</key><array><string>xz</string></array></dict>
+        </dict>
+        <dict>
+            <key>UTTypeIdentifier</key><string>org.tukaani.tar-xz-archive</string>
+            <key>UTTypeDescription</key><string>XZ TAR Archive</string>
+            <key>UTTypeConformsTo</key><array><string>public.archive</string></array>
+            <key>UTTypeTagSpecification</key><dict><key>public.filename-extension</key><array><string>txz</string></array></dict>
+        </dict>
+        <dict>
+            <key>UTTypeIdentifier</key><string>org.7-zip.7-zip-archive</string>
+            <key>UTTypeDescription</key><string>7-Zip Archive</string>
+            <key>UTTypeConformsTo</key><array><string>public.archive</string></array>
+            <key>UTTypeTagSpecification</key><dict><key>public.filename-extension</key><array><string>7z</string></array></dict>
+        </dict>
+        <dict>
+            <key>UTTypeIdentifier</key><string>com.rarlab.rar-archive</string>
+            <key>UTTypeDescription</key><string>RAR Archive</string>
+            <key>UTTypeConformsTo</key><array><string>public.archive</string></array>
+            <key>UTTypeTagSpecification</key><dict><key>public.filename-extension</key><array><string>rar</string></array></dict>
+        </dict>
+        <dict>
             <key>UTTypeIdentifier</key><string>public.standard-tesselated-geometry-format</string>
             <key>UTTypeDescription</key><string>STL Model</string>
             <key>UTTypeConformsTo</key><array><string>public.3d-content</string><string>public.data</string></array>
@@ -209,6 +269,16 @@
                 <string>net.daringfireball.markdown</string>
                 <string>public.plain-text</string>
                 <string>public.folder</string>
+                <string>public.zip-archive</string>
+                <string>public.tar-archive</string>
+                <string>org.gnu.gnu-zip-archive</string>
+                <string>org.gnu.gnu-zip-tar-archive</string>
+                <string>public.bzip2-archive</string>
+                <string>public.tar-bzip2-archive</string>
+                <string>org.tukaani.xz-archive</string>
+                <string>org.tukaani.tar-xz-archive</string>
+                <string>org.7-zip.7-zip-archive</string>
+                <string>com.rarlab.rar-archive</string>
                 <string>public.html</string>
                 <string>public.rtf</string>
                 <string>com.adobe.pdf</string>

@@ -8,7 +8,7 @@ Folio is an open-source macOS reader for local project files. Browse saved folde
 
 ## Highlights
 
-- **Read local files.** Preview Markdown, text, static HTML, RTF, PDF, images, audio, video, and 3D models. View CSV and TSV as tables and render Mermaid or Vega-Lite diagrams.
+- **Read local files.** Preview Markdown, text, static HTML, RTF, PDF, images, audio, video, and 3D models. Browse archives, view CSV and TSV as tables, and render Mermaid or Vega-Lite diagrams.
 - **Keep related files together.** Save multiple folders, open tabs and split panes, jump to Markdown headings, and inspect Git history and diffs.
 - **Customize reading.** Choose a light or dark appearance and edit the JSON palettes in **Settings → Appearance → Themes**.
 - **Edit in place.** Switch between reading, source, and source with live preview. Use Command-S to save.
@@ -51,6 +51,23 @@ external MTL materials. glTF extensions that need separate compression decoders
 are not supported. Preview limits are 128 MiB per file, 256 MiB of local resources
 or unpacked 3MF model XML, and two million displayed triangles.
 
+## Archives
+
+Open ZIP, TAR, 7Z, and RAR archives, including TAR compressed with gzip, bzip2,
+or xz (`.tar.gz`, `.tgz`, `.tar.bz2`, `.tbz`, `.tbz2`, `.tar.xz`, and `.txz`).
+Standalone `.gz`, `.bz2`, and `.xz` files are also supported. Browse the file
+tree or filter by path, then select a file to preview it. Relative links and
+local images work within the archive. Floating previews use the same browser;
+Finder Quick Look shows a file listing.
+
+Archive contents are read only. Folio unpacks them into a private temporary
+folder and removes it when the preview is released, without changing the
+archive or writing into its original folder. Password-protected archives are
+not supported. Links, special files, and Git metadata are not previewed.
+Limits are 128 MiB per input archive or unpacked file, 256 MiB total unpacked,
+10,000 entries including parent directories, and three nested archive levels.
+Quick Look lists up to 500 entries and identifies longer listings.
+
 ## Command line
 
 Once Folio is in Applications, install the bundled command into `~/.local/bin`. For the original preview, replace `Folio.app` in the path with `Folio Preview.app`.
@@ -88,6 +105,7 @@ npm test --prefix renderer
 scripts/check-consumer
 scripts/check-quicklook "$app"
 scripts/check-model-preview "$app"
+scripts/check-archive-preview "$app"
 ```
 
 ## Embed the Rust core

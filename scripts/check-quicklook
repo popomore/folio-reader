@@ -5,8 +5,8 @@ stage="$(mktemp -d "$PWD/.build/quicklook-check.XXXXXX")"
 trap 'rm -rf "$stage"' EXIT
 xcrun swiftc -swift-version 6 -target arm64-apple-macosx14.0 -warnings-as-errors \
   -import-objc-header apps/macos/Bridge.h \
-  apps/macos/Sources/{Core,FolioTheme,ThemeStore,ModelPreview}.swift apps/macos/QuickLook/*.swift apps/macos/QuickLookTests/PreviewCheck.swift \
+  apps/macos/Sources/{Archive,Core,FolioTheme,ThemeStore,ModelPreview}.swift apps/macos/QuickLook/*.swift apps/macos/QuickLookTests/PreviewCheck.swift \
   target/aarch64-apple-darwin/release/libfolio_bridge.a \
-  -lz -liconv -framework Security -framework SystemConfiguration -framework CoreFoundation \
+  -larchive -lz -liconv -framework Security -framework SystemConfiguration -framework CoreFoundation \
   -o "$stage/check-quicklook"
 "$stage/check-quicklook" "$@"

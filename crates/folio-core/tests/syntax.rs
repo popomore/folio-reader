@@ -77,7 +77,7 @@ fn matching_source_is_opened_as_an_editable_document() {
     assert_eq!(FileKind::from_path(Path::new("page.html")), FileKind::Html);
     assert_eq!(
         FileKind::from_path(Path::new("archive.zip")),
-        FileKind::Other
+        FileKind::Archive
     );
 }
 

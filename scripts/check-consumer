@@ -22,6 +22,7 @@ TOML
 cp Cargo.lock "$consumer/Cargo.lock"
 cat > "$consumer/src/main.rs" <<'RS'
 use folio_core::{FileKind, Workspace};
+use std::path::Path;
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let workspace = Workspace::open("fixture")?;
@@ -29,6 +30,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let document = workspace.read("note.md")?;
     assert_eq!(document.kind, FileKind::Markdown);
     assert_eq!(document.preview.unwrap().headings[0].title, "Notes");
+    assert_eq!(FileKind::from_path(Path::new("files.zip")), FileKind::Archive);
+    assert!(!FileKind::Archive.editable());
     #[cfg(feature = "default")]
     assert!(workspace.git_file("note.md")?.is_none());
     Ok(())

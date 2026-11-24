@@ -54,6 +54,7 @@ jobs:
           test "$(plutil -extract NSExtension.NSExtensionPointIdentifier raw "$preview")" = com.apple.quicklook.preview
           scripts/check-quicklook "$app"
           scripts/check-model-preview "$app"
+          scripts/check-archive-preview "$app"
           xcrun swiftc -swift-version 6 -warnings-as-errors \
             apps/macos/Sources/WorkspaceLayout.swift apps/macos/LayoutTests/WorkspaceLayoutCheck.swift \
             -o "$RUNNER_TEMP/folio-layout-check"

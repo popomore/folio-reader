@@ -40,6 +40,8 @@ final class PreviewProvider: QLPreviewProvider, QLPreviewingController {
             return .native(file)
         case .model:
             return .model(file)
+        case .archive:
+            return try archiveContent(at: file, resources: resources)
         case .markdown, .text, .html, .table, .mermaid, .vega:
             return try textContent(at: file, resources: resources)
         case .other:
@@ -73,6 +75,33 @@ final class PreviewProvider: QLPreviewProvider, QLPreviewingController {
         guard let preview = try Core.textPreview(for: file.lastPathComponent, source: text) else {
             throw CoreError(message: "Folio has no text preview for this file type.")
         }
+        return try htmlContent(preview.html, resources: resources)
+    }
+
+    private static func archiveContent(at file: URL, resources: Bundle) throws -> Content {
+        let index = try ArchiveContents.index(file)
+        func escape(_ value: String) -> String {
+            value.replacingOccurrences(of: "&", with: "&amp;")
+                .replacingOccurrences(of: "<", with: "&lt;")
+                .replacingOccurrences(of: ">", with: "&gt;")
+                .replacingOccurrences(of: "\"", with: "&quot;")
+        }
+        let rows = index.items.prefix(500).map { item in
+            let name = escape(item.path) + (item.directory ? "/" : "")
+            let size = item.directory ? "" : ByteCountFormatter.string(fromByteCount: item.bytes, countStyle: .file)
+            let note = item.unavailableReason.map { " (\(escape($0)))" } ?? ""
+            return "<tr><td>\(name)\(note)</td><td>\(size)</td></tr>"
+        }.joined()
+        let limited = index.items.count > 500 ? "<p>Showing the first 500 entries. Open in Folio to browse all files.</p>" : ""
+        let listing = index.items.isEmpty ? "<p>This archive is empty.</p>" : "<table><thead><tr><th>Name</th><th>Size</th></tr></thead><tbody>\(rows)</tbody></table>"
+        return try htmlContent("""
+            <h1>\(escape(file.lastPathComponent))</h1>
+            <p>\(index.fileCount) files, \(ByteCountFormatter.string(fromByteCount: index.bytes, countStyle: .file)) unpacked. Open in Folio to preview files.</p>
+            \(listing)\(limited)
+            """, resources: resources)
+    }
+
+    private static func htmlContent(_ html: String, resources: Bundle) throws -> Content {
         guard let styleURL = resources.url(forResource: "reader", withExtension: "css") else {
             throw CoreError(message: "The preview stylesheet is missing.")
         }
@@ -93,11 +122,11 @@ final class PreviewProvider: QLPreviewProvider, QLPreviewingController {
             article { padding-block-end: 46px; }
             </style>
             </head>
-            <body><article>\(preview.html)</article></body>
+            <body><article>\(html)</article></body>
             </html>
             """.utf8)
-        let hasCharts = preview.html.contains("<code class=\"language-mermaid\">")
-            || preview.html.contains("<code class=\"language-vega-lite\">")
+        let hasCharts = html.contains("<code class=\"language-mermaid\">")
+            || html.contains("<code class=\"language-vega-lite\">")
         return .html(page, hasCharts: hasCharts)
     }
 }

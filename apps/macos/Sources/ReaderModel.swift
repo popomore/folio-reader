@@ -27,6 +27,8 @@ struct FileLocation: Hashable, Sendable {
 final class ReaderTab: ObservableObject, Identifiable {
     nonisolated let id = UUID()
     let location: FileLocation
+    let readOnly: Bool
+    let archiveDepth: Int
     @Published private(set) var document: Document?
     @Published private(set) var loading = false
     @Published private(set) var mode: ReaderMode = .reading
@@ -46,13 +48,17 @@ final class ReaderTab: ObservableObject, Identifiable {
     private var draftTask: Task<Void, Never>?
     private var previewNeedsReload = false
 
-    init(location: FileLocation) { self.location = location }
+    init(location: FileLocation, readOnly: Bool = false, archiveDepth: Int = 0) {
+        self.location = location
+        self.readOnly = readOnly
+        self.archiveDepth = archiveDepth
+    }
 
     var editing: Bool { mode != .reading }
     var dirty: Bool { editing && document?.source != draft }
     var title: String { location.name }
     var canFind: Bool { mode != .source && preview != nil && previewError == nil }
-    var canEdit: Bool { document?.revision != nil && document?.source != nil }
+    var canEdit: Bool { !readOnly && document?.revision != nil && document?.source != nil }
     var preview: Document.Preview? {
         if case .success(let preview) = draftPreview { return preview }
         return document?.preview
@@ -132,7 +138,7 @@ final class ReaderTab: ObservableObject, Identifiable {
 
     @discardableResult
     func save() -> Bool {
-        guard editing, let document, let revision = document.revision else { return false }
+        guard canEdit, editing, let document, let revision = document.revision else { return false }
         guard dirty else { return true }
         do {
             let savedRevision: String? = try Core.request("save", root: location.root, path: location.path,

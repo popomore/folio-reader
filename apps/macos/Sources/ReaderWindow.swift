@@ -331,6 +331,10 @@ struct TabDocument: View {
             if let preview = tab.preview {
                 ReaderWeb(tab: tab, follow: follow, root: tab.location.root, path: tab.location.path,
                           html: preview.html, appearance: appearance, theme: theme)
+            } else if document.kind == .archive {
+                AnyView(ArchiveReader(file: file, depth: tab.archiveDepth, appearance: appearance,
+                                      setMediaActivity: setMediaActivity))
+                    .id(tab.id)
             } else {
                 NativePreview(file: file, kind: document.kind, bytes: document.bytes,
                               playbackChanged: { setMediaActivity(tab.id, $0) })
