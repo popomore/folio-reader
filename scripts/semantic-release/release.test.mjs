@@ -160,15 +160,29 @@ test('changed packages and stale sources fail before creating a tag', t => {
   assert.equal(git('tag', '--list', plan.tag), '');
 });
 
+test('publication resumes a matching annotated tag using its peeled commit', t => {
+  const { cwd, git, commit, run } = fixture(t);
+  commit('fix(reader): repair navigation');
+  const original = run();
+  const plan = original.plan();
+  original.packages();
+  git('tag', '-a', plan.tag, '-m', 'Annotated release fixture', plan.sourceSha);
+  git('push', 'origin', plan.tag);
+  assert.notEqual(git('rev-parse', plan.tag), plan.sourceSha);
+  original.publish();
+  assert.equal(git('rev-parse', `${plan.tag}^{}`), plan.sourceSha);
+  assert.equal(readFileSync(resolve(cwd, '.fixture-published'), 'utf8').trim(), plan.tag);
+});
+
 test('a conflicting tag, another run, or a source outside main is rejected', t => {
   const { cwd, git, commit, run } = fixture(t);
   commit('fix(reader): repair navigation');
   const original = run();
   const plan = original.plan();
   original.packages();
-  git('tag', plan.tag, 'v1.0.0'); git('push', 'origin', plan.tag);
+  git('tag', '-a', plan.tag, '-m', 'Conflicting annotated fixture', 'v1.0.0'); git('push', 'origin', plan.tag);
   assert.match(original.publish(false), /refusing to move/);
-  assert.equal(git('rev-parse', plan.tag), git('rev-parse', 'v1.0.0'));
+  assert.equal(git('rev-parse', `${plan.tag}^{}`), git('rev-parse', 'v1.0.0'));
   const changed = { ...plan, runId: '99' };
   writeJSON(original.env.RELEASE_PLAN, changed);
   assert.match(original.publish(false), /Release plan mismatch: runId/);
