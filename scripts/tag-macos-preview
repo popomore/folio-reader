@@ -1,38 +1,3 @@
 #!/usr/bin/env bash
 set -euo pipefail
-
-repo="${GITHUB_REPOSITORY:?}"
-source_sha="${SOURCE_SHA:?}"
-base_sha="${BASE_SHA:?}"
-test "$(git rev-parse HEAD)" = "$source_sha"
-git merge-base --is-ancestor "$source_sha" origin/main
-manifest=.release/units/folio.json
-if [[ "$(jq -r '.auto_on_main' "$manifest")" != true ]]; then
-  exit 0
-fi
-paths="$(jq -er '.paths[]' "$manifest")"
-release_paths=()
-while IFS= read -r path; do release_paths+=("$path"); done <<< "$paths"
-if git diff --quiet "$base_sha" "$source_sha" -- "${release_paths[@]}"; then
-  exit 0
-else
-  test "$?" -eq 1
-fi
-
-base_version="$(jq -er .base_version "$manifest")"
-timestamp="$(git show -s --format=%ct "$source_sha")"
-short_sha="${source_sha:0:7}"
-scripts/macos-version "$base_version" "$timestamp-$short_sha" > /dev/null
-tag="v$base_version.$timestamp-$short_sha"
-ref="refs/tags/$tag"
-existing="$(gh api "repos/$repo/git/matching-refs/tags/$tag" --jq ".[] | select(.ref == \"$ref\") | .ref")"
-if [[ -z "$existing" ]]; then
-  gh api --method POST "repos/$repo/git/refs" -f ref="$ref" -f sha="$source_sha" --silent
-else
-  test "$(gh api "repos/$repo/commits/$ref" --jq .sha)" = "$source_sha"
-fi
-published="$(gh api --paginate "repos/$repo/releases?per_page=100" |
-  jq -sc --arg tag "$tag" 'any(.[][]; .tag_name == $tag and .draft == false and .prerelease and .immutable)')"
-if [[ "$published" != true ]]; then
-  gh workflow run release-macos.yml --repo "$repo" --ref "$tag" -F publish-preview=true
-fi
+node scripts/semantic-release/preview.mjs

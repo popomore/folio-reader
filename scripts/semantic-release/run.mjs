@@ -1,19 +1,15 @@
+import { semanticEnvironment, recoverChannelNote } from '@popomore/release-actions/apple';
 import semanticRelease from 'semantic-release';
 import config from '../../release.config.mjs';
 import { appendFileSync, existsSync, mkdirSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
-import { execFileSync } from 'node:child_process';
 import { git, readJSON, writeJSON, validatePlan, validateAssets } from './state.mjs';
 import { publishPlan } from './macos.mjs';
 
 const mode = process.argv[2];
 if (!['plan', 'publish'].includes(mode)) throw new Error('Use plan or publish');
-const env = { ...process.env, RELEASE_MODE: mode };
+const env = semanticEnvironment({ ...process.env, RELEASE_MODE: mode });
 if (env.GITHUB_ACTIONS !== 'true' || !(env.GITHUB_TOKEN || env.GH_TOKEN)) throw new Error('Run release automation in GitHub Actions');
-// Use the installation-token path in the pinned engine, as in MusicX.
-env.GITHUB_TOKEN = env.GITHUB_TOKEN || env.GH_TOKEN;
-delete env.GH_TOKEN;
-env.GITHUB_ACTION ||= 'semantic-release';
 if (env.GITHUB_REF !== 'refs/heads/release' || env.GITHUB_EVENT_NAME !== 'workflow_dispatch') {
   throw new Error('Use a dispatch on the tested release branch');
 }
@@ -31,23 +27,7 @@ function assertCurrent(plan) {
 }
 
 function recover(plan) {
-  const ref = `refs/notes/semantic-release-${plan.tag}`;
-  const authEnv = { ...env, GIT_AUTHOR_NAME: 'semantic-release-bot', GIT_AUTHOR_EMAIL: 'semantic-release-bot@martynus.net',
-    GIT_COMMITTER_NAME: 'semantic-release-bot', GIT_COMMITTER_EMAIL: 'semantic-release-bot@martynus.net',
-    GIT_CONFIG_COUNT: '1', GIT_CONFIG_KEY_0: 'http.https://github.com/.extraheader',
-    GIT_CONFIG_VALUE_0: `AUTHORIZATION: basic ${Buffer.from(`x-access-token:${env.GITHUB_TOKEN}`).toString('base64')}` };
-  const command = args => {
-    try { return execFileSync('git', args, { env: authEnv, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }).trim(); }
-    catch { throw new Error('Release note recovery failed; remote output was suppressed'); }
-  };
-  if (git('ls-remote', 'origin', ref)) {
-    command(['fetch', 'origin', `${ref}:${ref}`]);
-    const note = JSON.parse(command(['notes', '--ref', ref, 'show', plan.tag]));
-    if (!note.channels?.includes(null)) throw new Error('Existing tag channel note conflicts with the plan');
-  } else {
-    command(['notes', '--ref', ref, 'add', '-m', JSON.stringify({ channels: [null] }), plan.tag]);
-    command(['push', 'origin', ref]);
-  }
+  recoverChannelNote({ plan, env, channel: null });
   publishPlan(plan, env.RELEASE_ARTIFACTS, env);
 }
 

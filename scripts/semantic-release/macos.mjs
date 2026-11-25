@@ -1,3 +1,4 @@
+import { verifyPlannedRelease } from '@popomore/release-actions/apple';
 import { generateNotes as conventionalNotes } from '@semantic-release/release-notes-generator';
 import { execFileSync } from 'node:child_process';
 import { resolve } from 'node:path';
@@ -22,8 +23,7 @@ export async function generateNotes(_config, context) {
 export async function verifyRelease(_config, context) {
   if (context.env.RELEASE_MODE !== 'publish') return;
   const plan = planned(context);
-  if (context.nextRelease.gitTag !== plan.tag || context.nextRelease.version !== plan.version
-      || context.nextRelease.gitHead !== plan.sourceSha) throw new Error('The release changed after packaging; refusing to tag');
+  verifyPlannedRelease(plan, context.nextRelease);
   validateAssets(plan, context.env.RELEASE_ARTIFACTS, context.env.RELEASE_PLAN);
 }
 

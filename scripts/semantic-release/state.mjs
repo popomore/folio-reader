@@ -1,3 +1,4 @@
+import { verifyArtifactReceipt } from '@popomore/release-actions/apple';
 import { createHash } from 'node:crypto';
 import { execFileSync } from 'node:child_process';
 import { readFileSync, writeFileSync } from 'node:fs';
@@ -28,15 +29,5 @@ export function validatePlan(plan, expected = {}) {
 }
 
 export function validateAssets(plan, directory, planFile) {
-  const receipt = readJSON(resolve(directory, 'validated-artifacts.json'));
-  if (receipt.schema !== 1 || receipt.planSha256 !== digest(readFileSync(planFile))
-      || receipt.sourceSha !== plan.sourceSha || receipt.tag !== plan.tag
-      || receipt.signingMode !== 'developer-id'
-      || Object.keys(receipt.files).sort().join('\n') !== assetNames(plan).sort().join('\n')) {
-    throw new Error('Artifacts do not match the original release plan');
-  }
-  for (const name of assetNames(plan)) {
-    if (digest(readFileSync(resolve(directory, name))) !== receipt.files[name]) throw new Error(`Artifact digest mismatch: ${name}`);
-  }
-  return receipt;
+  return verifyArtifactReceipt({ plan, directory, planFile, assetNames: assetNames(plan), signingMode: 'developer-id' });
 }
