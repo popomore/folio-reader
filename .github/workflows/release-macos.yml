@@ -188,31 +188,7 @@ jobs:
           FOLIO_APPLE_NOTARY_ISSUER: ${{ secrets.FOLIO_APPLE_NOTARY_ISSUER }}
           FOLIO_UPDATE_PRIVATE_KEY: ${{ secrets.FOLIO_UPDATE_PRIVATE_KEY }}
           FOLIO_UPDATE_PUBLIC_KEY: ${{ vars.FOLIO_UPDATE_PUBLIC_KEY }}
-        run: |
-          set -euo pipefail
-          umask 077
-          directory=$(mktemp -d "$RUNNER_TEMP/folio-signing.XXXXXX")
-          previous=$(security list-keychains -d user)
-          keychain="$directory/signing.keychain-db"
-          cleanup() {
-            security delete-keychain "$keychain" >/dev/null 2>&1 || true
-            rm -rf "$directory"
-          }
-          trap cleanup EXIT
-          printf '%s' "$FOLIO_APPLE_CERTIFICATE" | base64 -D > "$directory/certificate.p12"
-          password=$(openssl rand -hex 24)
-          security create-keychain -p "$password" "$keychain"
-          security unlock-keychain -p "$password" "$keychain"
-          python3 - "$keychain" "$previous" <<'PY'
-          import shlex, subprocess, sys
-          subprocess.run(["security", "list-keychains", "-d", "user", "-s", sys.argv[1], *shlex.split(sys.argv[2])], check=True)
-          PY
-          security import "$directory/certificate.p12" -f pkcs12 -k "$keychain" -P "$FOLIO_APPLE_CERTIFICATE_PASSWORD" -T /usr/bin/codesign
-          security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$password" "$keychain"
-          export FOLIO_SIGNING_KEYCHAIN="$keychain"
-          FOLIO_APPLE_SIGNING_IDENTITY=$(security find-identity -v -p codesigning "$keychain" | sed -n 's/.*"\(Developer ID Application: .*\)"/\1/p')
-          export FOLIO_APPLE_SIGNING_IDENTITY
-          scripts/package-macos-release
+        run: bash scripts/sign-macos-release
       - if: steps.published.outputs.release-id == '' && steps.signed.outputs.id == ''
         name: Retain the exact signed packages before staging
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2

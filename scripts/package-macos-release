@@ -53,4 +53,4 @@ xcrun stapler validate "$dmg"
 codesign --verify "$dmg"
 scripts/macos-appcast "$FOLIO_VERSION" "dist/$archive" \
   "https://github.com/$FOLIO_RELEASE_REPOSITORY/releases/download/v$FOLIO_VERSION/$archive" \
-  .release/notes.txt dist/appcast.xml "$key_directory/sparkle"
+  "${FOLIO_RELEASE_NOTES_FILE:-.release/notes.txt}" dist/appcast.xml "$key_directory/sparkle"
