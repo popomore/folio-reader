@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { previewCompatibilityPlan } from '@popomore/release-actions/tags';
+import { previewCompatibilityPlan } from '@popomore/github-actions/release/tags';
 
 test('semantic preview versions retain the existing installed-client tag and asset format', () => {
   const plan = previewCompatibilityPlan({ version: '1.1.0-preview.12', tag: 'v1.1.0-preview.12', channel: 'prerelease', source_sha: 'a'.repeat(40) }, '1793840000');

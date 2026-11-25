@@ -1,4 +1,4 @@
-import { verifyArtifactReceipt } from '@popomore/release-actions/apple';
+import { verifyArtifactReceipt } from '@popomore/github-actions/release/apple';
 import { createHash } from 'node:crypto';
 import { execFileSync } from 'node:child_process';
 import { readFileSync, writeFileSync } from 'node:fs';

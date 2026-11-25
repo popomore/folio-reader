@@ -1,4 +1,4 @@
-import { verifyPlannedRelease } from '@popomore/release-actions/apple';
+import { verifyPlannedRelease } from '@popomore/github-actions/release/apple';
 import { generateNotes as conventionalNotes } from '@semantic-release/release-notes-generator';
 import { execFileSync } from 'node:child_process';
 import { resolve } from 'node:path';

@@ -14,6 +14,6 @@
     "@semantic-release/commit-analyzer": "13.0.1",
     "@semantic-release/release-notes-generator": "14.1.1",
     "conventional-changelog-conventionalcommits": "9.3.1",
-    "@popomore/release-actions": "https://github.com/popomore/release-actions/archive/d4eb7d7c540e072525ba20a512ed02e19e195e05.tar.gz"
+    "@popomore/github-actions": "https://github.com/popomore/github-actions/archive/d60eb1507866afc66973ded7266a41f711e4a57f.tar.gz"
   }
 }

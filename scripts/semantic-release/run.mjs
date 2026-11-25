@@ -1,4 +1,4 @@
-import { semanticEnvironment, recoverChannelNote } from '@popomore/release-actions/apple';
+import { semanticEnvironment, recoverChannelNote } from '@popomore/github-actions/release/apple';
 import semanticRelease from 'semantic-release';
 import config from '../../release.config.mjs';
 import { appendFileSync, existsSync, mkdirSync } from 'node:fs';

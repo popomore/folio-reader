@@ -1,6 +1,6 @@
 import { execFileSync } from 'node:child_process';
-import { planUnit, git, digest } from '@popomore/release-actions/planner';
-import { previewCompatibilityPlan, createTag, verifyBranchTip } from '@popomore/release-actions/tags';
+import { planUnit, git, digest } from '@popomore/github-actions/release/planner';
+import { previewCompatibilityPlan, createTag, verifyBranchTip } from '@popomore/github-actions/release/tags';
 import { readFileSync } from 'node:fs';
 import { hasPublishedPreview } from './releases.mjs';
 
