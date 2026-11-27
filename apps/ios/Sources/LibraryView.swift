@@ -1,32 +1,15 @@
 import SwiftUI
 import UniformTypeIdentifiers
 
-struct FileSelection: Hashable, Identifiable {
-    let folder: SavedFolder
-    let path: String
-    var id: String { "\(folder.id)/\(path)" }
-}
-
 private enum PickerMode: String, Identifiable {
     case folder, files
     var id: String { rawValue }
 }
 
-private struct FolderLocation: Hashable {
-    let folder: SavedFolder
-    let path: String
-}
-
-private enum LibraryRoute: Hashable {
-    case folder(FolderLocation)
-    case file(FileSelection)
-}
-
 struct LibraryView: View {
     @Environment(LibraryStore.self) private var library
     @Environment(\.horizontalSizeClass) private var sizeClass
-    @State private var selected: FileSelection?
-    @State private var routes: [LibraryRoute] = []
+    @State private var navigation = LibraryNavigation()
     @State private var picker: PickerMode?
     @State private var settings = false
 
@@ -34,13 +17,13 @@ struct LibraryView: View {
         @Bindable var library = library
         Group {
             if sizeClass == .compact {
-                NavigationStack(path: $routes) { libraryRoot }
+                NavigationStack(path: $navigation.routes) { libraryRoot }
             } else {
                 NavigationSplitView {
-                    NavigationStack(path: $routes) { libraryRoot }
+                    NavigationStack(path: $navigation.routes) { libraryRoot }
                 } detail: {
                     NavigationStack {
-                        if let selected {
+                        if let selected = navigation.selected {
                             document(selected)
                         } else {
                             ContentUnavailableView("Choose a File", systemImage: "doc.text",
@@ -77,8 +60,10 @@ struct LibraryView: View {
             }
         }
         .onChange(of: sizeClass) { _, next in
-            routes.removeAll { if case .file = $0 { true } else { false } }
-            if next == .compact, let selected { routes.append(.file(selected)) }
+            navigation.adapt(toCompact: next == .compact)
+        }
+        .onChange(of: navigation.routes) { _, _ in
+            if sizeClass == .compact { navigation.synchronizeCompactSelection() }
         }
     }
 
@@ -88,7 +73,7 @@ struct LibraryView: View {
             .navigationDestination(for: LibraryRoute.self) { route in
                 switch route {
                 case .folder(let location):
-                    FolderBrowser(folder: location.folder, path: location.path, open: open)
+                    FolderBrowser(folder: location.folder, path: location.path, open: { open($0, $1) })
                 case .file(let selection): document(selection)
                 }
             }
@@ -106,11 +91,13 @@ struct LibraryView: View {
     }
 
     private func document(_ selection: FileSelection) -> some View {
-        DocumentReader(selection: selection, follow: { open(selection.folder, $0) }).id(selection.id)
+        DocumentReader(selection: selection, follow: { path, fragment in
+            open(selection.folder, path, fragment: fragment)
+        }).id(selection.id)
     }
 
     private func show(_ folder: SavedFolder) {
-        routes = [.folder(FolderLocation(folder: folder, path: ""))]
+        navigation.routes = [.folder(FolderLocation(folder: folder, path: ""))]
     }
 
     private var libraryList: some View {
@@ -139,7 +126,7 @@ struct LibraryView: View {
                         }
                         .contextMenu {
                             Button("Remove from Library", systemImage: "minus.circle", role: .destructive) {
-                                if selected?.folder == folder { selected = nil }
+                                if navigation.selected?.folder == folder { navigation.selected = nil }
                                 library.remove(folder)
                             }
                         }
@@ -176,10 +163,9 @@ struct LibraryView: View {
         .overlay { if library.busy { ProgressView("Opening…").padding().background(.regularMaterial, in: RoundedRectangle(cornerRadius: 12)) } }
     }
 
-    private func open(_ folder: SavedFolder, _ path: String) {
-        selected = FileSelection(folder: folder, path: path)
+    private func open(_ folder: SavedFolder, _ path: String, fragment: String? = nil) {
+        navigation.open(FileSelection(folder: folder, path: path, fragment: fragment), compact: sizeClass == .compact)
         library.record(folder, path: path)
-        if sizeClass == .compact, let selected { routes.append(.file(selected)) }
     }
 
     private func perform(_ operation: @escaping @MainActor () async throws -> Void) {

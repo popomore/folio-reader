@@ -1,4 +1,5 @@
 import XCTest
+import UIKit
 
 @MainActor
 final class ReaderTests: XCTestCase {
@@ -27,6 +28,10 @@ final class ReaderTests: XCTestCase {
         XCTAssertTrue(link.waitForExistence(timeout: 20))
         link.tap()
         XCTAssertTrue(app.webViews.staticTexts["Field Notes"].waitForExistence(timeout: 10))
+        if UIDevice.current.userInterfaceIdiom == .phone {
+            app.navigationBars.buttons["BackButton"].firstMatch.tap()
+            XCTAssertTrue(app.webViews.staticTexts["A place for your project files"].waitForExistence(timeout: 10))
+        }
     }
 
     func testEditSaveAndReopen() {

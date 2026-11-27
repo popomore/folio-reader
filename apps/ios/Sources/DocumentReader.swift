@@ -3,10 +3,11 @@ import SwiftUI
 struct DocumentReader: View {
     @Environment(LibraryStore.self) private var library
     let selection: FileSelection
-    let follow: (String) -> Void
+    let follow: (String, String?) -> Void
 
     var body: some View {
-        ReaderContent(folder: selection.folder, path: selection.path, storage: library.storage, follow: follow)
+        ReaderContent(folder: selection.folder, path: selection.path, fragment: selection.fragment,
+                      storage: library.storage, follow: follow)
     }
 }
 
@@ -20,10 +21,12 @@ private struct ReaderContent: View {
     @State private var heading: HeadingTarget?
     @State private var export: PreviewFile?
     @State private var exporting = false
-    let follow: (String) -> Void
+    let follow: (String, String?) -> Void
 
-    init(folder: SavedFolder, path: String, storage: URL, follow: @escaping (String) -> Void) {
+    init(folder: SavedFolder, path: String, fragment: String?, storage: URL,
+         follow: @escaping (String, String?) -> Void) {
         _session = State(initialValue: DocumentSession(folder: folder, path: path, storage: storage))
+        _heading = State(initialValue: fragment.map { HeadingTarget(fragment: $0) })
         self.follow = follow
     }
 

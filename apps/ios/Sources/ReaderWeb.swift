@@ -15,7 +15,7 @@ struct ReaderWeb: UIViewRepresentable {
     let serif: Bool
     let heading: HeadingTarget?
     @Binding var error: String?
-    let follow: (String) -> Void
+    let follow: (String, String?) -> Void
 
     func makeCoordinator() -> Coordinator { Coordinator(owner: self) }
 
@@ -121,7 +121,9 @@ struct ReaderWeb: UIViewRepresentable {
             if action.navigationType == .linkActivated {
                 if url.scheme == "folio", url.host == "files" {
                     let relative = String(url.path.dropFirst())
-                    if (try? WorkspaceIO.file(relative, in: owner.access)) != nil { owner.follow(relative) }
+                    if (try? WorkspaceIO.file(relative, in: owner.access)) != nil {
+                        owner.follow(relative, URLComponents(url: url, resolvingAgainstBaseURL: false)?.fragment)
+                    }
                 } else if ["http", "https", "mailto"].contains(url.scheme ?? "") {
                     await UIApplication.shared.open(url)
                 }

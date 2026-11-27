@@ -134,6 +134,22 @@ final class WorkspaceTests: XCTestCase {
         XCTAssertEqual(restored.draft, "# Saved draft")
     }
 
+    func testUndoingAllEditsRemovesTheRecoveryDraft() async throws {
+        try Data("# Original".utf8).write(to: base.appendingPathComponent("note.md"))
+        let folder = try await WorkspaceIO.remember(base)
+        let storage = base.appendingPathComponent("State")
+        let session = DocumentSession(folder: folder, path: "note.md", storage: storage)
+        await session.load()
+        session.draft = "# Undone edit"
+        await session.persistDraft()
+        session.draft = "# Original"
+        await session.persistDraft()
+        let restored = DocumentSession(folder: folder, path: "note.md", storage: storage)
+        await restored.load()
+        XCTAssertFalse(restored.recovered)
+        XCTAssertEqual(restored.draft, "# Original")
+    }
+
     func testFailedSaveKeepsARecoverableDraftUntilExplicitDiscard() async throws {
         let file = base.appendingPathComponent("note.md")
         try Data("# Original".utf8).write(to: file)

@@ -58,9 +58,11 @@ final class DocumentSession {
     }
 
     func persistDraft() async {
-        guard hasChanges, let revision else { return }
-        do { try await drafts.write(DraftRecord(source: draft, revision: revision), key: key) }
-        catch { self.error = "Your recovery draft could not be saved: \(error.localizedDescription)" }
+        guard let revision else { return }
+        do {
+            if hasChanges { try await drafts.write(DraftRecord(source: draft, revision: revision), key: key) }
+            else { try await drafts.remove(key) }
+        } catch { self.error = "Your recovery draft could not be updated: \(error.localizedDescription)" }
     }
 
     func save() async -> Bool {
