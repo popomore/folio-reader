@@ -22,6 +22,9 @@ struct ReaderWeb: NSViewRepresentable {
         config.websiteDataStore = .nonPersistent()
         config.setURLSchemeHandler(context.coordinator, forURLScheme: "folio")
         config.userContentController.add(context.coordinator, name: "folioScroll")
+        config.userContentController.add(context.coordinator, name: "folioReading")
+        config.userContentController.addUserScript(WKUserScript(source: CloudReadingScript.tracking,
+            injectionTime: .atDocumentEnd, forMainFrameOnly: true))
         let view = WKWebView(frame: .zero, configuration: config)
         view.navigationDelegate = context.coordinator
         view.setValue(false, forKey: "drawsBackground")
@@ -37,6 +40,7 @@ struct ReaderWeb: NSViewRepresentable {
 
     static func dismantleNSView(_ view: WKWebView, coordinator: Coordinator) {
         view.configuration.userContentController.removeScriptMessageHandler(forName: "folioScroll")
+        view.configuration.userContentController.removeScriptMessageHandler(forName: "folioReading")
         if coordinator.tab?.web === coordinator {
             coordinator.tab?.web = nil
         }
@@ -118,10 +122,21 @@ struct ReaderWeb: NSViewRepresentable {
                 heading(headingID)
             } else if let y = tab?.scrollOffset, y > 0 {
                 webView.callAsyncJavaScript("window.scrollTo(0, y)", arguments: ["y": y], in: nil, in: .page)
+            } else if let position = tab?.resumePosition {
+                tab?.resumePosition = nil
+                webView.callAsyncJavaScript("window.folioResumeReading(position, sameRevision)",
+                    arguments: CloudReadingScript.arguments(position, revision: tab?.document?.revision), in: nil, in: .page)
             }
+            webView.callAsyncJavaScript("window.webkit.messageHandlers.folioReading.postMessage(window.folioReadingLocation())",
+                arguments: [:], in: nil, in: .page)
         }
 
         func userContentController(_ userContentController: WKUserContentController, didReceive message: WKScriptMessage) {
+            if !pending, message.frameInfo.isMainFrame, message.name == "folioReading",
+               let position = CloudReadingScript.position(message.body, revision: tab?.document?.revision) {
+                tab?.updateReadingPosition(position)
+                return
+            }
             if !pending, message.frameInfo.isMainFrame, let offset = message.body as? Double, offset.isFinite {
                 tab?.scrollOffset = max(0, offset)
             }

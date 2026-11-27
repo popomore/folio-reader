@@ -39,7 +39,7 @@ struct Appearance: Equatable {
 
 @MainActor
 final class SettingsNavigation: ObservableObject {
-    enum Page: Hashable { case appearance, quickLook, updates }
+    enum Page: Hashable { case appearance, iCloud, quickLook, updates }
 
     @Published var page: Page = .appearance
     var openSettings: OpenSettingsAction?
@@ -76,12 +76,14 @@ struct ReaderSettings: View {
     var body: some View {
         TabView(selection: $navigation.page) {
             appearance.tabItem { Label("Appearance", systemImage: "textformat") }.tag(SettingsNavigation.Page.appearance)
+            NavigationStack { CloudSettingsPane(cloud: model.cloud) }
+                .tabItem { Label("iCloud", systemImage: "icloud") }.tag(SettingsNavigation.Page.iCloud)
             QuickLookSettings(isSelected: navigation.page == .quickLook)
                 .tabItem { Label("Quick Look", systemImage: "eye") }.tag(SettingsNavigation.Page.quickLook)
             UpdateSettings(updates: updates)
                 .tabItem { Label("Updates", systemImage: "arrow.clockwise") }.tag(SettingsNavigation.Page.updates)
         }
-        .frame(width: 500, height: 420)
+        .frame(width: 580, height: 500)
         .onChange(of: navigation.page, initial: true) { _, page in
             if page == .quickLook { navigation.didDisplayQuickLook() }
         }

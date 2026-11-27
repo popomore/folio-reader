@@ -43,6 +43,7 @@ jobs:
           cargo clippy --locked --workspace --all-targets -- -D warnings
           cargo test --locked --workspace
           cargo test --locked -p folio-core --no-default-features
+          cargo test --locked -p folio-bridge --no-default-features
   macos:
     runs-on: xcode-27
     timeout-minutes: 20
@@ -72,6 +73,10 @@ jobs:
           scripts/check-quicklook "$app"
           scripts/check-model-preview "$app"
           scripts/check-archive-preview "$app"
+          xcrun swiftc -swift-version 6 -warnings-as-errors -parse-as-library \
+            apps/shared/CloudModels.swift apps/shared/CloudFiles.swift apps/macos/CloudTests/CloudFilesCheck.swift \
+            -o "$RUNNER_TEMP/folio-cloud-file-check"
+          "$RUNNER_TEMP/folio-cloud-file-check"
           xcrun swiftc -swift-version 6 -warnings-as-errors \
             apps/macos/Sources/WorkspaceLayout.swift apps/macos/LayoutTests/WorkspaceLayoutCheck.swift \
             -o "$RUNNER_TEMP/folio-layout-check"
@@ -107,14 +112,47 @@ jobs:
           cargo test --locked --workspace
           npm test --prefix renderer
           scripts/check-consumer
+  ios:
+    name: iOS
+    runs-on: xcode-27
+    timeout-minutes: 35
+    env:
+      DEVELOPER_DIR: /Applications/Xcode_27.2.app/Contents/Developer
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version-file: .node-version
+          package-manager-cache: false
+      - name: Install the pinned iOS Rust targets
+        run: rustup target add aarch64-apple-ios aarch64-apple-ios-sim
+      - name: Compile for simulator and device
+        run: |
+          scripts/build-ios simulator
+          scripts/build-ios device
+      - name: Verify coordinated files and the native reading flows
+        env:
+          FOLIO_IOS_RESULT_BUNDLE: ${{ runner.temp }}/Folio-iOS-${{ github.run_id }}-${{ github.run_attempt }}.xcresult
+        run: scripts/check-ios
+      - name: Retain iOS test results and screenshots
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: folio-ios-tests-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/Folio-iOS-${{ github.run_id }}-${{ github.run_attempt }}.xcresult
+          if-no-files-found: ignore
+          retention-days: 7
   gate:
     name: CI gate
-    needs: [rust, macos, release-tools]
+    needs: [rust, macos, ios, release-tools]
     if: ${{ !cancelled() }}
     uses: ./.github/workflows/ci-gate.yml
     with:
       rust: ${{ needs.rust.result }}
       macos: ${{ needs.macos.result }}
+      ios: ${{ needs.ios.result }}
       release-tools: ${{ needs.release-tools.result }}
   tag:
     name: Tag macOS Preview

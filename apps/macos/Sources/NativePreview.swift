@@ -8,13 +8,15 @@ struct NativePreview: View {
     let kind: FileKind
     let bytes: Int64
     let playbackChanged: (Bool) -> Void
+    var initialPosition: CloudPosition? = nil
+    var positionChanged: @MainActor @Sendable (CloudPosition) -> Void = { _ in }
 
     @ViewBuilder
     var body: some View {
         switch kind {
         case .pdf:
             if let document = PDFDocument(url: file) {
-                PDFReader(document: document)
+                PDFReader(document: document, initialPosition: initialPosition, positionChanged: positionChanged)
             } else {
                 unavailable("This PDF could not be opened.")
             }
@@ -52,16 +54,38 @@ struct NativePreview: View {
 
 struct PDFReader: NSViewRepresentable {
     let document: PDFDocument
+    var initialPosition: CloudPosition? = nil
+    var positionChanged: @MainActor @Sendable (CloudPosition) -> Void = { _ in }
+    func makeCoordinator() -> Coordinator { Coordinator() }
 
     func makeNSView(context: Context) -> PDFView {
         let view = PDFView()
         view.autoScales = true
         view.displayMode = .singlePageContinuous
         view.document = document
+        if let index = initialPosition?.page, let page = document.page(at: min(max(0, index), max(0, document.pageCount - 1))) {
+            view.go(to: page)
+        }
+        context.coordinator.observe(view, changed: positionChanged)
         return view
     }
 
     func updateNSView(_ view: PDFView, context: Context) {}
+    static func dismantleNSView(_ view: PDFView, coordinator: Coordinator) { coordinator.cancel() }
+
+    @MainActor
+    final class Coordinator {
+        private var observer: (any NSObjectProtocol)?
+        func observe(_ view: PDFView, changed: @escaping @MainActor @Sendable (CloudPosition) -> Void) {
+            observer = NotificationCenter.default.addObserver(forName: .PDFViewPageChanged, object: view, queue: .main) { [weak view] _ in
+                MainActor.assumeIsolated {
+                    guard let view, let document = view.document, let page = view.currentPage else { return }
+                    changed(CloudPosition(page: document.index(for: page)))
+                }
+            }
+        }
+        func cancel() { if let observer { NotificationCenter.default.removeObserver(observer) }; observer = nil }
+    }
 }
 
 struct RichText: NSViewRepresentable {

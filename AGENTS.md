@@ -15,6 +15,13 @@
 - Manage the minimum Rust version in `Cargo.toml` and the compiler toolchain in `rust-toolchain.toml`.
 - Use `scripts/check-consumer` to verify public `folio-core` APIs. Keep AppKit, Finder, and other platform integration in the macOS app.
 
+# iOS
+
+- Build with `scripts/build-ios [simulator|device]` or the shared Folio Xcode scheme. Preserve the `org.popomore.folio.ios.dev` development identity.
+- Run `scripts/check-ios` for native fixture and UI tests. Use `FOLIO_IOS_SIMULATOR` to select a simulator; verify iPhone and iPad navigation when changing layout.
+- Keep document-picker permissions, security-scoped bookmarks, and file coordination in the iOS app. Build `folio-bridge` with `--no-default-features` for iOS.
+- Verify reading and saving with separate fixtures, including conflicts and draft recovery. Keep simulator, unsigned device compilation, signed device use, and TestFlight evidence separate.
+
 # Releases
 
 - Use a clean checkout of `origin/main` with passing Folio CI. Derive the release version from the tag.
