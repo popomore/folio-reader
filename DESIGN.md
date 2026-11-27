@@ -48,3 +48,19 @@ have a useful state.
 Use standard platform transitions and respect Reduce Motion. Reuse assets/folio.png
 and SF Symbols. No generated illustration or visual mock is needed for this
 extension of the established native product.
+
+## iCloud copy management
+
+Provide **Settings > iCloud > Manage Reading Copies** on iPhone, iPad, and Mac
+in iCloud-enabled builds. Show the copies Folio created for
+cross-device reading, their sizes, source devices, and last-read dates. Support
+selection and explicit cloud deletion, with a confirmation that names the scope
+and preserves the source files. Keep removing a local download a separate action.
+The initial design uses manual cleanup with no automatic expiry.
+
+The management screen uses the shorter title **Reading Copies**. Continue Reading
+opens read-only snapshots for Folio-created copies; explicitly linked iCloud
+documents remain editable in their original folder. See
+[iCloud sharing and manual cleanup](docs/icloud-sharing.md) for the interaction
+contract and [iCloud setup](docs/icloud-setup.md) for signing and physical-device
+acceptance. Local fixtures do not establish live cloud synchronization.

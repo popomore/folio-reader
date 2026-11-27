@@ -21,6 +21,21 @@ struct Folio: App {
         }
         .defaultSize(width: 1130, height: 760)
         .commands {
+            CommandMenu("iCloud") {
+                Button("Continue on Another Device") { model.sendActiveToCloud() }
+                    .disabled(!model.cloud.available || model.cloud.sharing || model.active == nil ||
+                              model.active?.dirty == true || model.active?.cloudReadOnly == true)
+                Button("Send Folder with Assets…") { model.sendActiveToCloud(folder: true) }
+                    .disabled(!model.cloud.available || model.cloud.sharing || model.active == nil ||
+                              model.active?.dirty == true || model.active?.cloudReadOnly == true)
+                Divider()
+                ForEach(model.cloud.continuing.prefix(20)) { item in
+                    Button(item.name) { Task { await model.openCloud(item) } }
+                        .disabled(model.cloud.uploading(item))
+                }
+                Divider()
+                Button("Manage Reading Copies") { settings.open(.iCloud) }
+            }
             CommandGroup(after: .appInfo) {
                 Button("Check for Updates…") {
                     settings.open(.updates)
@@ -127,11 +142,57 @@ private struct WorkspaceSceneContent: View {
     let settings: SettingsNavigation
     @Environment(\.openWindow) private var openWindow
     @Environment(\.openSettings) private var openSettings
+    @Environment(\.scenePhase) private var scenePhase
 
     var body: some View {
         ReaderWindow(model: model)
+            .safeAreaInset(edge: .bottom) {
+                VStack(alignment: .leading, spacing: 6) {
+                    if model.active?.cloudReadOnly == true {
+                        Label("iCloud reading copy. Edit the original file to make changes.", systemImage: "icloud")
+                            .font(.caption).foregroundStyle(.secondary)
+                    }
+                    if let notice = model.cloud.notice {
+                        HStack {
+                            Text(notice).font(.caption)
+                            Spacer()
+                            Button("Dismiss iCloud Message", systemImage: "xmark") { model.cloud.notice = nil }
+                                .labelStyle(.iconOnly).buttonStyle(.plain)
+                        }
+                    }
+                }
+                .padding(model.active?.cloudReadOnly == true || model.cloud.notice != nil ? 8 : 0)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .background(.bar)
+            }
             .preferredColorScheme(model.appearance.workspace.colorScheme)
             .frame(minWidth: 660, minHeight: 420)
+            .onContinueUserActivity(CloudEnvironment.activityType, perform: model.continueCloudActivity)
+            .userActivity(CloudEnvironment.activityType, isActive: model.active?.cloudItem != nil && !model.cloud.testOnly) { activity in
+                if let tab = model.active, let item = tab.cloudItem {
+                    CloudContinuation.configure(activity, item: item, position: tab.readingPosition,
+                        folder: item.storage == .linked ? tab.location.root : nil)
+                }
+            }
+            .task(id: scenePhase) {
+                if scenePhase == .active {
+                    while !Task.isCancelled {
+                        await model.cloud.refresh()
+                        do { try await Task.sleep(for: .seconds(30)) } catch { break }
+                    }
+                } else { await model.cloud.flushPositions() }
+            }
+            .onReceive(NotificationCenter.default.publisher(for: .NSUbiquityIdentityDidChange)) { _ in
+                model.cloud.accountChanged()
+                Task { await model.cloud.refresh() }
+            }
+            .onChange(of: model.cloud.retired) { _, ids in model.retireCloudTabs(ids) }
+            .onChange(of: model.cloud.eviction) { _, event in
+                if let event { model.retireCloudTabs([event.item], downloadsOnly: true) }
+            }
+            .onChange(of: model.cloud.account) { old, new in
+                if old != nil, old != new { model.retireCloudTabs([], all: true) }
+            }
             .onAppear {
                 delegate.model = model
                 delegate.updates = updates

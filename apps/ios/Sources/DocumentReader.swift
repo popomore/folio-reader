@@ -7,12 +7,13 @@ struct DocumentReader: View {
 
     var body: some View {
         ReaderContent(session: selection.session(storage: library.storage),
-                      fragment: selection.fragment, follow: follow)
+                      fragment: selection.fragment, cloudItem: selection.cloudItem, follow: follow)
     }
 }
 
 private struct ReaderContent: View {
     @Environment(ReaderPreferences.self) private var preferences
+    @Environment(CloudLibrary.self) private var cloud: CloudLibrary?
     @Environment(\.scenePhase) private var scenePhase
     @ScaledMetric(relativeTo: .body) private var textSize: CGFloat = 17
     @State private var session: DocumentSession
@@ -21,13 +22,19 @@ private struct ReaderContent: View {
     @State private var heading: HeadingTarget?
     @State private var export: PreviewFile?
     @State private var exporting = false
+    @State private var sentItem: CloudItem?
+    @State private var sendFolder = false
+    @State private var discardRecovered = false
+    let cloudItem: CloudItem?
     let follow: (String, String?) -> Void
+    private var sharedItem: CloudItem? { cloudItem ?? sentItem }
 
-    init(session: DocumentSession, fragment: String?,
+    init(session: DocumentSession, fragment: String?, cloudItem: CloudItem?,
          follow: @escaping (String, String?) -> Void) {
         _session = State(initialValue: session)
         _heading = State(initialValue: fragment.map { HeadingTarget(fragment: $0) })
         self.follow = follow
+        self.cloudItem = cloudItem
     }
 
     var body: some View {
@@ -39,6 +46,9 @@ private struct ReaderContent: View {
                     Spacer()
                     Button("Review") { session.beginEditing() }
                         .disabled(!session.canEdit)
+                    if session.readOnly {
+                        Button("Discard Draft", role: .destructive) { discardRecovered = true }
+                    }
                 }
                 .font(.subheadline).padding().background(.quaternary)
             }
@@ -48,9 +58,12 @@ private struct ReaderContent: View {
                 if let preview = opened.document.preview {
                     ReaderWeb(access: opened.access, path: session.path, html: preview.html,
                               size: Double(textSize) * preferences.scale, serif: preferences.serif,
-                              heading: heading, error: $session.error, follow: follow)
+                              heading: heading, error: $session.error, follow: follow,
+                              initialPosition: session.readingPosition,
+                              revision: session.revision, positionChanged: updatePosition)
                 } else if let file = opened.preview {
-                    NativeReader(file: file.url, kind: opened.document.kind)
+                    NativeReader(file: file.url, kind: opened.document.kind,
+                        initialPosition: session.readingPosition, positionChanged: updatePosition)
                 } else {
                     ContentUnavailableView("Preview Unavailable", systemImage: opened.document.kind.icon,
                                            description: Text("This file type has no iOS preview. Use Share to open it in another app."))
@@ -65,6 +78,13 @@ private struct ReaderContent: View {
             if let error = session.error, session.opened != nil {
                 Text(error).font(.footnote).foregroundStyle(.red).padding().frame(maxWidth: .infinity, alignment: .leading)
             }
+            if session.readOnly {
+                Text("iCloud reading copy. Edit the original file to make changes.")
+                    .font(.footnote).foregroundStyle(.secondary).padding(.horizontal)
+            }
+            if sentItem != nil, let notice = cloud?.notice {
+                Text(notice).font(.footnote).foregroundStyle(.secondary).padding()
+            }
         }
         .navigationTitle(session.name)
         .navigationBarTitleDisplayMode(.inline)
@@ -74,7 +94,13 @@ private struct ReaderContent: View {
                     Button("Document Outline", systemImage: "list.bullet.indent") { outline = true }
                 }
                 Menu {
-                    Button("Reading Settings", systemImage: "textformat.size") { settings = true }
+                    if let cloud, !session.readOnly {
+                        Section("Continue on Another Device") {
+                            Button("Send Document to iCloud", systemImage: "icloud.and.arrow.up") { send(folder: false) }
+                            Button("Send Folder with Assets", systemImage: "folder.badge.plus") { sendFolder = true }
+                        }.disabled(!cloud.available || cloud.sharing || session.opened == nil || session.hasChanges)
+                    }
+                    Button("Settings", systemImage: "gearshape") { settings = true }
                     Button("Reload Document", systemImage: "arrow.clockwise") { Task { await session.load() } }
                         .disabled(session.loading)
                     Button("Share File", systemImage: "square.and.arrow.up") {
@@ -92,6 +118,16 @@ private struct ReaderContent: View {
             }
         }
         .sheet(isPresented: $settings) { ReadingSettings() }
+        .alert("Discard this recovery draft?", isPresented: $discardRecovered) {
+            Button("Discard Draft", role: .destructive) { Task { await session.discard() } }
+            Button("Cancel", role: .cancel) { }
+        } message: { Text("The saved reading copy will be kept.") }
+        .confirmationDialog("Send this folder to iCloud?", isPresented: $sendFolder, titleVisibility: .visible) {
+            Button("Send Folder with Assets") { send(folder: true) }
+            Button("Cancel", role: .cancel) { }
+        } message: {
+            Text("A reading copy of the selected folder and its visible files will be added to iCloud. The original folder will be kept.")
+        }
         .sheet(isPresented: $outline) {
             NavigationStack {
                 List(session.opened?.document.preview?.headings ?? []) { item in
@@ -107,9 +143,51 @@ private struct ReaderContent: View {
         }
         .sheet(isPresented: $session.editing) { DocumentEditor(session: session) }
         .sheet(item: $export) { file in ShareSheet(file: file.url) }
-        .task { await session.loadIfNeeded() }
+        .task {
+            await session.loadIfNeeded()
+            if session.opened != nil, let item = sharedItem {
+                var position = session.readingPosition
+                position.path = session.path
+                cloud?.recordPosition(item.identity, position: position)
+                if cloudItem != nil { cloud?.setProtected(item.identity, session.hasChanges || session.recovered || session.saving) }
+            }
+        }
         .onChange(of: scenePhase) { _, phase in
             if phase != .active { Task { await session.persistDraft() } }
+        }
+        .onChange(of: session.hasChanges) { _, dirty in
+            if let cloudItem { cloud?.setProtected(cloudItem.identity, dirty || session.recovered || session.saving) }
+        }
+        .onChange(of: session.recovered) { _, recovered in
+            if let cloudItem { cloud?.setProtected(cloudItem.identity, recovered || session.hasChanges || session.saving) }
+        }
+        .onChange(of: session.saving) { _, saving in
+            if let cloudItem { cloud?.setProtected(cloudItem.identity, saving || session.recovered || session.hasChanges) }
+        }
+        .userActivity(CloudEnvironment.activityType, isActive: sharedItem != nil && session.opened != nil && cloud?.testOnly != true) { activity in
+            if let item = sharedItem {
+                var position = session.readingPosition
+                position.path = session.path
+                CloudContinuation.configure(activity, item: item, position: position,
+                    folder: item.storage == .linked ? session.opened?.access.root : nil)
+            }
+        }
+    }
+
+    private func updatePosition(_ position: CloudPosition) {
+        var position = position
+        position.path = session.path
+        position.revision = session.revision
+        session.readingPosition = position
+        if let sharedItem { cloud?.recordPosition(sharedItem.identity, position: position) }
+    }
+
+    private func send(folder: Bool) {
+        guard let cloud, let opened = session.opened else { return }
+        Task {
+            do { sentItem = try await cloud.send(root: opened.access.root, path: session.path, folder: folder,
+                                                 position: session.readingPosition) }
+            catch { session.error = error.localizedDescription }
         }
     }
 }

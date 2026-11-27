@@ -21,6 +21,7 @@ final class ReaderPreferences {
 struct FolioApp: App {
     @State private var library: LibraryStore
     @State private var preferences: ReaderPreferences
+    @State private var cloud: CloudLibrary
 
     init() {
         var base: URL?
@@ -33,8 +34,20 @@ struct FolioApp: App {
             defaults = UserDefaults(suiteName: "FolioUITests.\(test)") ?? .standard
         }
         #endif
-        _library = State(initialValue: LibraryStore(base: base))
+        let library = LibraryStore(base: base)
+        _library = State(initialValue: library)
         _preferences = State(initialValue: ReaderPreferences(defaults: defaults))
+        let cloudStorage = library.storage.appendingPathComponent("Cloud")
+        #if DEBUG
+        if base != nil, ProcessInfo.processInfo.environment["FOLIO_CLOUD_TEST_LIBRARY"] == "1",
+           let fixture = try? CloudFixture.library(storage: cloudStorage, device: UIDevice.current.name) {
+            _cloud = State(initialValue: fixture)
+        } else {
+            _cloud = State(initialValue: CloudLibrary(storage: cloudStorage, deviceName: UIDevice.current.name))
+        }
+        #else
+        _cloud = State(initialValue: CloudLibrary(storage: cloudStorage, deviceName: UIDevice.current.name))
+        #endif
     }
 
     var body: some Scene {
@@ -42,6 +55,7 @@ struct FolioApp: App {
             LibraryView()
                 .environment(library)
                 .environment(preferences)
+                .environment(cloud)
                 .preferredColorScheme(preferences.colorScheme)
         }
     }
@@ -49,12 +63,20 @@ struct FolioApp: App {
 
 struct ReadingSettings: View {
     @Environment(ReaderPreferences.self) private var preferences
+    @Environment(CloudLibrary.self) private var cloud: CloudLibrary?
     @Environment(\.dismiss) private var dismiss
 
     var body: some View {
         @Bindable var preferences = preferences
         NavigationStack {
             Form {
+                if let cloud {
+                    Section("iCloud") {
+                        NavigationLink { CloudSettingsPane(cloud: cloud) } label: {
+                            Label("iCloud", systemImage: "icloud")
+                        }.accessibilityIdentifier("icloud-settings")
+                    }
+                }
                 Section("Appearance") {
                     Picker("Theme", selection: $preferences.appearance) {
                         Text("System").tag("system")
@@ -81,7 +103,7 @@ struct ReadingSettings: View {
                     LabeledContent("Version", value: Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "0.1.0")
                 }
             }
-            .navigationTitle("Reading Settings")
+            .navigationTitle("Settings")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar { ToolbarItem(placement: .confirmationAction) { Button("Done") { dismiss() } } }
         }

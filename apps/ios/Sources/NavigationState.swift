@@ -5,13 +5,17 @@ struct FileSelection: Hashable, Identifiable, Sendable {
     let folder: SavedFolder
     let path: String
     let fragment: String?
+    let cloudItem: CloudItem?
+    let position: CloudPosition?
     private let reader: SelectionSession
 
     @MainActor
-    init(folder: SavedFolder, path: String, fragment: String? = nil) {
+    init(folder: SavedFolder, path: String, fragment: String? = nil, cloudItem: CloudItem? = nil, position: CloudPosition? = nil) {
         self.folder = folder
         self.path = path
         self.fragment = fragment
+        self.cloudItem = cloudItem
+        self.position = position
         reader = SelectionSession()
     }
 
@@ -21,7 +25,8 @@ struct FileSelection: Hashable, Identifiable, Sendable {
     @MainActor
     func session(storage: URL) -> DocumentSession {
         if let session = reader.value { return session }
-        let session = DocumentSession(folder: folder, path: path, storage: storage)
+        let session = DocumentSession(folder: folder, path: path, storage: storage, readOnly: cloudItem?.storage == .copy)
+        session.readingPosition = position ?? CloudPosition()
         reader.value = session
         return session
     }

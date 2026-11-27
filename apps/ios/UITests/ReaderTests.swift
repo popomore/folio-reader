@@ -120,8 +120,8 @@ final class ReaderTests: XCTestCase {
 
     func testReadingSettingsAndDarkAppearance() {
         app.launch()
-        app.buttons["Reading Settings"].tap()
-        XCTAssertTrue(app.navigationBars["Reading Settings"].waitForExistence(timeout: 5))
+        app.buttons["Settings"].tap()
+        XCTAssertTrue(app.navigationBars["Settings"].waitForExistence(timeout: 5))
         app.buttons["appearance-picker"].tap()
         app.buttons["Dark"].tap()
         let serif = app.switches["Serif Font"]

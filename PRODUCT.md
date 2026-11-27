@@ -16,6 +16,9 @@ Folio is a local project-file reader, as documented in README.md. Keep related
 files together, render documents clearly, and make small text edits without
 leaving the reading workspace. The iOS application reuses folio-core for document
 classification, rendering, workspace boundaries, and revision-checked saves.
+Opt-in iCloud reading copies let the same person continue on another device.
+Keep the original folder intact, label copied content read-only, and provide
+explicit manual cleanup with separate local-download removal.
 
 ## Brand Personality
 

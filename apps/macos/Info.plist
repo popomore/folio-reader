@@ -297,5 +297,17 @@
             </array>
         </dict>
     </array>
+    <key>FolioCloudContainer</key><string>iCloud.org.popomore.folio</string>
+    <key>FolioCloudEnvironment</key><string>Development</string>
+    <key>NSUserActivityTypes</key><array><string>org.popomore.folio.reading</string></array>
+    <key>NSUbiquitousContainers</key>
+    <dict>
+        <key>iCloud.org.popomore.folio</key>
+        <dict>
+            <key>NSUbiquitousContainerIsDocumentScopePublic</key><true/>
+            <key>NSUbiquitousContainerName</key><string>Folio</string>
+            <key>NSUbiquitousContainerSupportedFolderLevels</key><string>ANY</string>
+        </dict>
+    </dict>
 </dict>
 </plist>

@@ -16,6 +16,9 @@ struct ReaderWeb: UIViewRepresentable {
     let heading: HeadingTarget?
     @Binding var error: String?
     let follow: (String, String?) -> Void
+    var initialPosition: CloudPosition? = nil
+    var revision: String? = nil
+    var positionChanged: (CloudPosition) -> Void = { _ in }
 
     func makeCoordinator() -> Coordinator { Coordinator(owner: self) }
 
@@ -24,6 +27,9 @@ struct ReaderWeb: UIViewRepresentable {
         configuration.websiteDataStore = .nonPersistent()
         configuration.setURLSchemeHandler(context.coordinator, forURLScheme: "folio")
         configuration.userContentController.add(context.coordinator, name: "folioScroll")
+        configuration.userContentController.add(context.coordinator, name: "folioReading")
+        configuration.userContentController.addUserScript(WKUserScript(source: CloudReadingScript.tracking,
+            injectionTime: .atDocumentEnd, forMainFrameOnly: true))
         let view = WKWebView(frame: .zero, configuration: configuration)
         view.navigationDelegate = context.coordinator
         view.isOpaque = false
@@ -40,6 +46,7 @@ struct ReaderWeb: UIViewRepresentable {
 
     static func dismantleUIView(_ view: WKWebView, coordinator: Coordinator) {
         view.configuration.userContentController.removeScriptMessageHandler(forName: "folioScroll")
+        view.configuration.userContentController.removeScriptMessageHandler(forName: "folioReading")
         view.stopLoading()
         coordinator.cancel()
     }
@@ -101,10 +108,20 @@ struct ReaderWeb: UIViewRepresentable {
             navigateHeading(in: view)
             if !headingPending, scroll > 0 {
                 view.callAsyncJavaScript("window.scrollTo(0, y)", arguments: ["y": scroll], in: nil, in: .page)
+            } else if !headingPending, let position = owner.initialPosition {
+                view.callAsyncJavaScript("window.folioResumeReading(position, sameRevision)",
+                    arguments: CloudReadingScript.arguments(position, revision: owner.revision), in: nil, in: .page)
             }
+            view.callAsyncJavaScript("window.webkit.messageHandlers.folioReading.postMessage(window.folioReadingLocation())",
+                arguments: [:], in: nil, in: .page)
         }
 
         func userContentController(_ controller: WKUserContentController, didReceive message: WKScriptMessage) {
+            if ready, message.frameInfo.isMainFrame, message.name == "folioReading",
+               let position = CloudReadingScript.position(message.body, revision: owner.revision) {
+                owner.positionChanged(position)
+                return
+            }
             if ready, message.frameInfo.isMainFrame, let y = message.body as? Double, y.isFinite {
                 scroll = max(0, y)
             }

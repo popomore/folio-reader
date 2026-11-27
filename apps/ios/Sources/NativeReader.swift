@@ -7,10 +7,12 @@ import SwiftUI
 struct NativeReader: View {
     let file: URL
     let kind: FileKind
+    var initialPosition: CloudPosition? = nil
+    var positionChanged: @MainActor @Sendable (CloudPosition) -> Void = { _ in }
 
     var body: some View {
         switch kind {
-        case .pdf: PDFReader(file: file)
+        case .pdf: PDFReader(file: file, initialPosition: initialPosition, positionChanged: positionChanged)
         case .image: ImageReader(file: file)
         case .audio, .video: MediaReader(file: file)
         case .rtf: RichTextReader(file: file)
@@ -21,11 +23,13 @@ struct NativeReader: View {
 
 private struct PDFReader: View {
     let file: URL
+    let initialPosition: CloudPosition?
+    let positionChanged: @MainActor @Sendable (CloudPosition) -> Void
     @State private var document: PDFDocument?
     @State private var loading = true
     var body: some View {
         Group {
-            if let document { PDFCanvas(document: document) }
+            if let document { PDFCanvas(document: document, initialPosition: initialPosition, positionChanged: positionChanged) }
             else if loading { ProgressView("Opening PDF…") }
             else {
                 ContentUnavailableView("PDF Unavailable", systemImage: "doc.richtext",
@@ -38,6 +42,9 @@ private struct PDFReader: View {
 
 private struct PDFCanvas: UIViewRepresentable {
     let document: PDFDocument
+    let initialPosition: CloudPosition?
+    let positionChanged: @MainActor @Sendable (CloudPosition) -> Void
+    func makeCoordinator() -> Coordinator { Coordinator() }
     func makeUIView(context: Context) -> PDFView {
         let view = PDFView()
         view.autoScales = true
@@ -45,9 +52,28 @@ private struct PDFCanvas: UIViewRepresentable {
         view.backgroundColor = .secondarySystemBackground
         view.document = document
         view.accessibilityIdentifier = "pdf-preview"
+        if let index = initialPosition?.page, let page = document.page(at: min(max(0, index), max(0, document.pageCount - 1))) {
+            view.go(to: page)
+        }
+        context.coordinator.observe(view, changed: positionChanged)
         return view
     }
     func updateUIView(_ view: PDFView, context: Context) {}
+    static func dismantleUIView(_ view: PDFView, coordinator: Coordinator) { coordinator.cancel() }
+
+    @MainActor
+    final class Coordinator {
+        private var observer: (any NSObjectProtocol)?
+        func observe(_ view: PDFView, changed: @escaping @MainActor @Sendable (CloudPosition) -> Void) {
+            observer = NotificationCenter.default.addObserver(forName: .PDFViewPageChanged, object: view, queue: .main) { [weak view] _ in
+                MainActor.assumeIsolated {
+                    guard let view, let document = view.document, let page = view.currentPage else { return }
+                    changed(CloudPosition(page: document.index(for: page)))
+                }
+            }
+        }
+        func cancel() { if let observer { NotificationCenter.default.removeObserver(observer) }; observer = nil }
+    }
 }
 
 private struct ImageReader: View {

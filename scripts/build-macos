@@ -113,7 +113,7 @@ iconutil -c icns "$stage/app.iconset" -o "$staged/Contents/Resources/Folio.icns"
 xcrun swiftc -swift-version 6 -target "$arch-apple-macosx14.0" -warnings-as-errors -O \
   -import-objc-header apps/macos/Bridge.h -F "$sparkle" -framework Sparkle \
   -Xlinker -rpath -Xlinker '@executable_path/../Frameworks' \
-  apps/macos/Sources/*.swift "$CARGO_TARGET_DIR/$target/release/libfolio_bridge.a" \
+  apps/macos/Sources/*.swift apps/shared/*.swift "$CARGO_TARGET_DIR/$target/release/libfolio_bridge.a" \
   -larchive -lz -liconv -framework Security -framework SystemConfiguration -framework CoreFoundation \
   -o "$staged/Contents/MacOS/Folio"
 xcrun swiftc -swift-version 6 -target "$arch-apple-macosx14.0" -warnings-as-errors -O \
@@ -126,8 +126,56 @@ xcrun swiftc -swift-version 6 -target "$arch-apple-macosx14.0" -warnings-as-erro
   -o "$quicklook/Contents/MacOS/FolioQuickLook"
 xcrun swiftc -swift-version 6 -target "$arch-apple-macosx14.0" -warnings-as-errors -O \
   apps/macos/CLI/*.swift -o "$staged/Contents/Helpers/folio"
+app_entitlements=""
+if [[ -n "${FOLIO_ICLOUD_PROFILE:-}" ]]; then
+  if [[ "$identity" == - ]]; then
+    identity="${FOLIO_APPLE_SIGNING_IDENTITY:?Set the signing identity for the iCloud profile}"
+  fi
+  security cms -D -i "$FOLIO_ICLOUD_PROFILE" > "$stage/icloud-profile.plist"
+  python3 - "$stage/icloud-profile.plist" apps/macos/iCloud.entitlements "$stage/icloud-entitlements.plist" "$bundle_id" "$identity" "$staged/Contents/Info.plist" <<'CLOUD'
+import datetime
+import fnmatch
+import plistlib
+import sys
+
+profile_path, template_path, output, bundle, identity, info_path = sys.argv[1:]
+with open(profile_path, "rb") as file:
+    profile = plistlib.load(file)
+with open(template_path, "rb") as file:
+    requested = plistlib.load(file)
+granted = profile.get("Entitlements", {})
+team = profile.get("TeamIdentifier", [""])[0]
+prefix = profile.get("ApplicationIdentifierPrefix", [team])[0]
+identifier = prefix + "." + bundle
+expires = profile.get("ExpirationDate", datetime.datetime.min)
+if expires.replace(tzinfo=datetime.timezone.utc) <= datetime.datetime.now(datetime.timezone.utc):
+    sys.exit("The iCloud provisioning profile has expired.")
+if not team or not identity.endswith("(" + team + ")"):
+    sys.exit("The signing identity and iCloud profile must use the same team.")
+if not fnmatch.fnmatchcase(identifier, granted.get("com.apple.application-identifier", "")):
+    sys.exit("The iCloud profile does not authorize this macOS bundle identity.")
+for key, values in requested.items():
+    if not set(values).issubset(granted.get(key, [])):
+        sys.exit("The profile does not grant the requested iCloud container and services.")
+requested["com.apple.application-identifier"] = identifier
+requested["com.apple.developer.team-identifier"] = team
+environment = granted.get("com.apple.developer.icloud-container-environment")
+if environment not in ("Development", "Production"):
+    sys.exit("The iCloud profile must specify its CloudKit environment.")
+requested["com.apple.developer.icloud-container-environment"] = environment
+with open(info_path, "rb") as file:
+    info = plistlib.load(file)
+info["FolioCloudEnvironment"] = environment
+with open(info_path, "wb") as file:
+    plistlib.dump(info, file)
+with open(output, "wb") as file:
+    plistlib.dump(requested, file)
+CLOUD
+  cp "$FOLIO_ICLOUD_PROFILE" "$staged/Contents/embedded.provisionprofile"
+  app_entitlements="$stage/icloud-entitlements.plist"
+fi
 sign=(--force --sign "$identity")
-if [[ "$mode" == release ]]; then
+if [[ "$mode" == release || -n "${FOLIO_ICLOUD_PROFILE:-}" ]]; then
   sign+=(--timestamp --options runtime)
   if [[ -n "${FOLIO_SIGNING_KEYCHAIN:-}" ]]; then
     sign+=(--keychain "$FOLIO_SIGNING_KEYCHAIN")
@@ -142,7 +190,11 @@ codesign "${sign[@]}" "$version_root/XPCServices/Installer.xpc"
 codesign "${sign[@]}" "$framework"
 codesign "${sign[@]}" "$staged/Contents/Helpers/folio"
 codesign "${sign[@]}" --entitlements apps/macos/QuickLook/Entitlements.plist "$quicklook"
-codesign "${sign[@]}" "$staged"
+if [[ -n "$app_entitlements" ]]; then
+  codesign "${sign[@]}" --entitlements "$app_entitlements" "$staged"
+else
+  codesign "${sign[@]}" "$staged"
+fi
 codesign --verify --deep --strict "$staged"
 rm -rf "$bundle"
 mv "$staged" "$bundle"

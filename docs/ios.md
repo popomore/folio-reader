@@ -62,8 +62,16 @@ There is no iOS release or TestFlight upload workflow in this change.
 - Recovery drafts are kept in Application Support, protected when the device is
   locked, and restored on reopening the document. Review the recovered draft,
   save it if the revision still matches, or explicitly discard it.
-- **Reading Settings** controls system/light/dark appearance, text size, and
-  serif text. Native controls and document typography follow Dynamic Type.
+- **Settings** controls system/light/dark appearance, text size, and serif text,
+  and provides the iCloud library and reading-copy manager. Native controls and
+  document typography follow Dynamic Type.
+- In an iCloud-enabled build, **Continue on Another Device** sends a document;
+  **Send Folder with Assets** preserves its relative documents and images.
+  **Continue Reading** resumes a read-only copy at its heading, paragraph, or
+  PDF page. A separately linked iCloud document stays editable in its folder.
+- **Settings > iCloud > Manage Reading Copies** supports selection, cloud
+  deletion, pending-operation retry/cancellation, and **Remove Download**.
+  Cleanup keeps the original files and excludes linked user-owned documents.
 
 The Rust core limits text previews and edits to 8 MiB and directory listings to
 5,000 entries. Imports, exports, and native snapshots are limited to 128 MiB per
@@ -96,6 +104,11 @@ the `.xcresult` bundle and its screenshots as a seven-day workflow artifact.
 Simulator checks do not establish physical-device performance, VoiceOver
 acceptance, third-party or iCloud File Provider behavior, device signing, or
 TestFlight availability. Those remain separate acceptance steps.
+
+Cross-device reading and management are implemented in source. Follow
+[iCloud setup](icloud-setup.md) to provision matching builds and validate actual
+cloud synchronization and Handoff. The automated local library exercises the
+[sharing and cleanup contract](icloud-sharing.md) without contacting iCloud.
 
 The file-access implementation follows Apple's
 [directory access guidance](https://developer.apple.com/documentation/uikit/providing-access-to-directories)

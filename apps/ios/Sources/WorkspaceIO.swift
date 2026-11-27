@@ -113,6 +113,9 @@ enum WorkspaceIO {
             let access = try FolderAccess(folder: folder)
             let target = try file(path, in: access)
             return try coordination.coordinate(at: target, writing: true) { url in
+                if (try? url.resourceValues(forKeys: [.isUbiquitousItemKey]).isUbiquitousItem) == true {
+                    try CloudVersions.ensureWritable(url)
+                }
                 let path = try relativePath(for: url, in: access)
                 guard let revision: String = try Core.request("save", root: access.root, path: path,
                                                               values: ["revision": revision, "source": source]) else {

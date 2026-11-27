@@ -12,6 +12,7 @@ Folio is an open-source reader for local project files. Browse saved folders, re
 - **Keep related files together.** Save multiple folders, open tabs and split panes, jump to Markdown headings, and inspect Git history and diffs.
 - **Customize reading.** Choose a light or dark appearance and edit the JSON palettes in **Settings → Appearance → Themes**.
 - **Edit in place.** Switch between reading, source, and source with live preview. Use Command-S to save.
+- **Continue on another device.** In an [iCloud-enabled build](docs/icloud-setup.md), send a document or folder as a reading copy, resume it on your other devices, and manage copies in Settings.
 - **Preview from Finder or Raycast.** Press Space in Finder for Quick Look, or use the bundled CLI to open a floating Folio preview.
 
 ## Install on macOS

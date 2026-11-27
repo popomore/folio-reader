@@ -16,7 +16,7 @@ struct ReaderBreadcrumbs: View {
     }
 
     private var segments: [Segment] {
-        let rootName = location.root.lastPathComponent
+        let rootName = tab.cloudItem?.folderName ?? location.root.lastPathComponent
         var result = [Segment(path: "", name: rootName.isEmpty ? location.root.path : rootName)]
         var parents: [Substring] = []
         for name in location.path.split(separator: "/") {

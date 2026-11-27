@@ -5,11 +5,14 @@ import Observation
 final class DocumentSession {
     let folder: SavedFolder
     let path: String
+    let readOnly: Bool
+    var readingPosition = CloudPosition()
     private let drafts: DraftStore
     private let draftOwner = UUID()
     private let readFile: @Sendable (SavedFolder, String) async throws -> OpenedFile
     private var draftTask: Task<Void, Never>?
     private var loadInFlight = false
+    private var documentObserver: CloudFileObservation?
     private var original = ""
     private var lastRecoverySource = ""
     private var draftVersion = 0
@@ -24,16 +27,17 @@ final class DocumentSession {
     var recovered = false
     var editing = false
     var hasChanges: Bool { draft != original }
-    var canEdit: Bool { revision != nil && !loading && !saving }
+    var canEdit: Bool { !readOnly && revision != nil && !loading && !saving }
     var name: String { URL(fileURLWithPath: path).lastPathComponent }
     private var key: String { "\(folder.id)/\(path)" }
 
-    init(folder: SavedFolder, path: String, storage: URL,
+    init(folder: SavedFolder, path: String, storage: URL, readOnly: Bool = false,
          readFile: @escaping @Sendable (SavedFolder, String) async throws -> OpenedFile = {
              try await WorkspaceIO.open($0, path: $1)
          }) {
         self.folder = folder
         self.path = path
+        self.readOnly = readOnly
         self.readFile = readFile
         drafts = DraftStore.shared(directory: storage.appendingPathComponent("Drafts"))
     }
@@ -47,6 +51,16 @@ final class DocumentSession {
         do {
             let opened = try await readFile(folder, path)
             self.opened = opened
+            let file = opened.access.root.appendingPathComponent(path)
+            if FileManager.default.isUbiquitousItem(at: file) {
+                documentObserver = CloudFileObservation(url: file) { [weak self] moved in
+                    guard let self, !self.saving, !self.loading else { return }
+                    if moved != nil { self.error = "This document moved. Open it again from its folder." }
+                    else if self.editing || self.hasChanges {
+                        self.error = "This document changed elsewhere. Your unsaved draft is kept."
+                    } else { Task { await self.load() } }
+                }
+            }
             revision = opened.document.revision
             original = opened.document.source ?? ""
             draft = original
@@ -95,6 +109,7 @@ final class DocumentSession {
     }
 
     func save() async -> Bool {
+        guard !readOnly else { return false }
         guard let revision, !loading, !saving else { return false }
         saving = true
         error = nil

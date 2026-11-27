@@ -44,9 +44,16 @@ final class ReaderTab: ObservableObject, Identifiable {
     weak var web: ReaderWeb.Coordinator?
     var pendingFragment: String?
     var scrollOffset = 0.0
+    @Published var cloudItem: CloudItem?
+    @Published var readingPosition = CloudPosition()
+    var resumePosition: CloudPosition?
+    var cloudReadOnly = false
+    weak var cloud: CloudLibrary?
+    var cloudAccess: CloudAccess?
     private var readTask: Task<Void, Never>?
     private var draftTask: Task<Void, Never>?
     private var previewNeedsReload = false
+    private var documentObserver: CloudFileObservation?
 
     init(location: FileLocation, readOnly: Bool = false, archiveDepth: Int = 0) {
         self.location = location
@@ -58,7 +65,7 @@ final class ReaderTab: ObservableObject, Identifiable {
     var dirty: Bool { editing && document?.source != draft }
     var title: String { location.name }
     var canFind: Bool { mode != .source && preview != nil && previewError == nil }
-    var canEdit: Bool { !readOnly && document?.revision != nil && document?.source != nil }
+    var canEdit: Bool { !readOnly && !cloudReadOnly && document?.revision != nil && document?.source != nil }
     var preview: Document.Preview? {
         if case .success(let preview) = draftPreview { return preview }
         return document?.preview
@@ -80,13 +87,30 @@ final class ReaderTab: ObservableObject, Identifiable {
         loading = true
         readTask = Task { [weak self] in
             let result = await Task.detached(priority: .userInitiated) {
-                Result<Document?, Error> { try Core.request("read", root: location.root, path: location.path) }
+                Result<Document?, Error> {
+                    try CloudReaderAccess.perform(root: location.root, path: location.path, writing: false) { path in
+                        try Core.request("read", root: location.root, path: path)
+                    }
+                }
             }.value
             guard !Task.isCancelled, let self else { return }
             loading = false
             switch result {
             case .success(let document):
                 self.document = document
+                if document != nil, let item = cloudItem {
+                    var position = readingPosition
+                    position.path = location.path
+                    cloud?.recordPosition(item.identity, position: position)
+                }
+                if FileManager.default.isUbiquitousItem(at: location.root.appendingPathComponent(location.path)) {
+                    documentObserver = CloudFileObservation(url: location.root.appendingPathComponent(location.path)) { [weak self] moved in
+                        guard let self else { return }
+                        if moved != nil { self.error = "This document moved. Open it again from its folder." }
+                        else if !editing { resumePosition = readingPosition; scrollOffset = 0; load() }
+                        else if dirty { self.error = "This document changed elsewhere. Save checks for conflicts before replacing it." }
+                    }
+                }
                 if document == nil { loadError = "The reader did not return a document." }
             case .failure(let error):
                 loadError = error.localizedDescription
@@ -109,6 +133,14 @@ final class ReaderTab: ObservableObject, Identifiable {
             finding = false
             clearDraftPreview()
         }
+    }
+
+    func updateReadingPosition(_ value: CloudPosition) {
+        var value = value
+        value.path = location.path
+        value.revision = document?.revision
+        readingPosition = value
+        if let cloudItem { cloud?.recordPosition(cloudItem.identity, position: value) }
     }
 
     private func renderDraft() {
@@ -141,8 +173,10 @@ final class ReaderTab: ObservableObject, Identifiable {
         guard canEdit, editing, let document, let revision = document.revision else { return false }
         guard dirty else { return true }
         do {
-            let savedRevision: String? = try Core.request("save", root: location.root, path: location.path,
-                                                          values: ["revision": revision, "source": draft])
+            let savedRevision: String? = try CloudReaderAccess.perform(root: location.root, path: location.path,
+                writing: true, presenter: documentObserver) { path in
+                    try Core.request("save", root: location.root, path: path, values: ["revision": revision, "source": draft])
+                }
             guard let savedRevision else { throw CoreError(message: "The file could not be saved.") }
             let fileSize = try? location.url?.resourceValues(forKeys: [.fileSizeKey]).fileSize
             previewNeedsReload = true
@@ -239,9 +273,22 @@ final class ReaderModel: ObservableObject {
         if active { activeMedia.insert(id) } else { activeMedia.remove(id) }
     }
     private let defaults: UserDefaults
+    let cloud: CloudLibrary
 
-    init(defaults: UserDefaults = .standard) {
+    init(defaults: UserDefaults = .standard, cloud: CloudLibrary? = nil) {
         self.defaults = defaults
+        if let cloud { self.cloud = cloud }
+        else {
+            let support = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
+            let root = InstanceMode.isSeparate ?
+                ProcessInfo.processInfo.environment["FOLIO_CLOUD_QA_DIRECTORY"].map { URL(fileURLWithPath: $0) } ??
+                    FileManager.default.temporaryDirectory.appendingPathComponent("FolioCloudQA-\(UUID().uuidString)") :
+                support.appendingPathComponent(Bundle.main.bundleIdentifier ?? "org.popomore.folio.tests")
+            let storage = root.appendingPathComponent("Cloud")
+            if InstanceMode.isSeparate, ProcessInfo.processInfo.environment["FOLIO_CLOUD_FIXTURE"] == "1",
+               let fixture = try? CloudFixture.library(storage: storage, device: "QA Mac") { self.cloud = fixture }
+            else { self.cloud = CloudLibrary(storage: storage, deviceName: Host.current().localizedName ?? "Mac") }
+        }
         if !InstanceMode.isSeparate {
             folders = (defaults.stringArray(forKey: Self.foldersKey) ?? []).map {
                 Folder(url: URL(fileURLWithPath: $0, isDirectory: true))
@@ -321,12 +368,91 @@ final class ReaderModel: ObservableObject {
             return
         }
         let tab = ReaderTab(location: location)
+        if let peer = groups.values.flatMap(\.tabs).first(where: {
+            $0.location.root.pathComponents == location.root.pathComponents &&
+                ($0.cloudReadOnly || $0.cloudItem?.storage == .linked || $0.cloudItem?.folderCopy == true)
+        }) {
+            tab.cloud = peer.cloud
+            tab.cloudItem = peer.cloudItem
+            tab.cloudReadOnly = peer.cloudReadOnly
+            tab.cloudAccess = peer.cloudAccess
+        }
         tab.pendingFragment = fragment
         var group = groups[target] ?? Group()
         group.tabs.append(tab)
         groups[target] = group
         activate(tab, in: target)
         tab.load()
+    }
+
+    func sendActiveToCloud(folder: Bool = false) {
+        guard let tab = active, !tab.dirty, !tab.loading, !tab.cloudReadOnly else { return }
+        if folder {
+            let alert = NSAlert()
+            alert.messageText = "Send this folder to iCloud?"
+            alert.informativeText = "A reading copy of the selected folder and its visible files will be added to iCloud. The original folder will be kept."
+            alert.addButton(withTitle: "Send Folder with Assets")
+            alert.addButton(withTitle: "Cancel")
+            guard alert.runModal() == .alertFirstButtonReturn else { return }
+        }
+        Task {
+            do {
+                let item = try await cloud.send(root: tab.location.root, path: tab.location.path, folder: folder, position: tab.readingPosition)
+                tab.cloud = cloud
+                tab.cloudItem = item
+            } catch { self.error = error.localizedDescription }
+        }
+    }
+
+    func openCloud(_ item: CloudItem, position: CloudPosition? = nil) async {
+        do {
+            if cloud.needsFolder(item) {
+                let panel = NSOpenPanel()
+                panel.canChooseDirectories = true
+                panel.canChooseFiles = false
+                panel.message = "Choose the iCloud folder containing \(item.name)."
+                guard panel.runModal() == .OK, let root = panel.url else { return }
+                try cloud.bind(item, to: root)
+            }
+            let opened = try await cloud.open(item)
+            let position = position ?? opened.position
+            let path = try CloudPaths.relative(position?.sanitized.path ?? item.path)
+            let location = FileLocation(root: opened.access.root, path: path)
+            open(location)
+            guard let tab = active, tab.location == location else { throw CloudFailure.stale }
+            guard !tab.dirty else { throw CloudFailure.message("Save or discard the current draft before continuing from another device.") }
+            tab.cloud = cloud
+            tab.cloudItem = item
+            tab.cloudReadOnly = item.storage == .copy
+            tab.cloudAccess = opened.access
+            tab.resumePosition = position
+            tab.scrollOffset = 0
+            tab.readingPosition = position ?? CloudPosition()
+            tab.load()
+        } catch { self.error = error.localizedDescription }
+    }
+
+    func continueCloudActivity(_ activity: NSUserActivity) {
+        guard let continuation = CloudContinuation.read(activity) else { return }
+        Task {
+            await cloud.refresh()
+            guard let item = cloud.item(continuation.identity.id), item.identity == continuation.identity, item.state == .active else {
+                error = CloudFailure.stale.localizedDescription
+                return
+            }
+            if item.storage == .linked, let folder = continuation.folder { try? cloud.bind(item, to: folder) }
+            await openCloud(item, position: continuation.position)
+        }
+    }
+
+    func retireCloudTabs(_ ids: Set<UUID>, all: Bool = false, downloadsOnly: Bool = false) {
+        for (pane, group) in groups {
+            for tab in group.tabs {
+                guard let item = tab.cloudItem, all || ids.contains(item.id) else { continue }
+                if tab.cloudReadOnly && !tab.dirty { close(tab, in: pane) }
+                else if !downloadsOnly { tab.cloudItem = nil; tab.cloud = nil }
+            }
+        }
     }
 
     func dropTab(_ id: UUID, in target: Pane, before anchor: UUID?, createRightPane: Bool = false) {

@@ -7,11 +7,14 @@ private enum PickerMode {
 
 struct LibraryView: View {
     @Environment(LibraryStore.self) private var library
+    @Environment(CloudLibrary.self) private var cloud
+    @Environment(\.scenePhase) private var scenePhase
     @Environment(\.horizontalSizeClass) private var sizeClass
     @State private var navigation = LibraryNavigation()
     @State private var pickerMode: PickerMode = .folder
     @State private var showingPicker = false
     @State private var settings = false
+    @State private var connecting: CloudItem?
 
     var body: some View {
         @Bindable var library = library
@@ -41,6 +44,12 @@ struct LibraryView: View {
             case .success(let urls):
                 perform {
                     if pickerMode == .folder, let url = urls.first {
+                        if let item = connecting {
+                            try cloud.bind(item, to: url)
+                            connecting = nil
+                            try await openCloud(item)
+                            return
+                        }
                         let folder = try await library.add(url)
                         show(folder)
                     } else if !urls.isEmpty {
@@ -65,6 +74,47 @@ struct LibraryView: View {
                 show(folder)
             }
         }
+        .onContinueUserActivity(CloudEnvironment.activityType) { activity in
+            guard let continuation = CloudContinuation.read(activity) else { return }
+            perform {
+                await cloud.refresh()
+                guard let item = cloud.item(continuation.identity.id), item.identity == continuation.identity else { throw CloudFailure.stale }
+                if item.storage == .linked, let folder = continuation.folder {
+                    try? cloud.bind(item, to: folder)
+                }
+                if cloud.needsFolder(item) { pick(.folder, connecting: item) }
+                else { try await openCloud(item, position: continuation.position) }
+            }
+        }
+        .task(id: scenePhase) {
+            if scenePhase == .active {
+                while !Task.isCancelled {
+                    await cloud.refresh()
+                    do { try await Task.sleep(for: .seconds(30)) } catch { break }
+                }
+            } else { await cloud.flushPositions() }
+        }
+        .onReceive(NotificationCenter.default.publisher(for: .NSUbiquityIdentityDidChange)) { _ in
+            cloud.accountChanged()
+            Task { await cloud.refresh() }
+        }
+        .onChange(of: cloud.retired) { _, retired in
+            if let item = navigation.selected?.cloudItem, retired.contains(item.id) {
+                navigation.selected = nil
+            }
+            navigation.routes.removeAll { if case .file(let file) = $0, let item = file.cloudItem { retired.contains(item.id) } else { false } }
+        }
+        .onChange(of: cloud.account) { old, new in
+            if old != nil, old != new {
+                navigation.routes.removeAll { if case .file(let file) = $0 { file.cloudItem != nil } else { false } }
+                if navigation.selected?.cloudItem != nil { navigation.selected = nil }
+            }
+        }
+        .onChange(of: cloud.eviction) { _, event in
+            guard let event else { return }
+            if navigation.selected?.cloudItem?.id == event.item { navigation.selected = nil }
+            navigation.routes.removeAll { if case .file(let file) = $0 { file.cloudItem?.id == event.item } else { false } }
+        }
         .onChange(of: sizeClass) { _, next in
             navigation.adapt(toCompact: next == .compact)
         }
@@ -85,7 +135,7 @@ struct LibraryView: View {
             }
             .toolbar {
                 ToolbarItem(placement: .topBarLeading) {
-                    Button("Reading Settings", systemImage: "textformat.size") { settings = true }.labelStyle(.iconOnly)
+                    Button("Settings", systemImage: "gearshape") { settings = true }.labelStyle(.iconOnly)
                 }
                 ToolbarItem(placement: .primaryAction) {
                     Menu {
@@ -96,14 +146,15 @@ struct LibraryView: View {
             }
     }
 
-    private func pick(_ mode: PickerMode) {
+    private func pick(_ mode: PickerMode, connecting item: CloudItem? = nil) {
+        connecting = item
         pickerMode = mode
         showingPicker = true
     }
 
     private func document(_ selection: FileSelection) -> some View {
         DocumentReader(selection: selection, follow: { path, fragment in
-            open(selection.folder, path, fragment: fragment)
+            open(selection.folder, path, fragment: fragment, cloudItem: selection.cloudItem)
         }).id(selection.id)
     }
 
@@ -113,6 +164,31 @@ struct LibraryView: View {
 
     private var libraryList: some View {
         List {
+            if !cloud.continuing.isEmpty {
+                Section("Continue Reading") {
+                    ForEach(cloud.continuing.prefix(20)) { item in
+                        Button {
+                            if cloud.needsFolder(item) { pick(.folder, connecting: item) }
+                            else { perform { try await openCloud(item) } }
+                        } label: {
+                            VStack(alignment: .leading, spacing: 4) {
+                                Text(cloud.latestReading(item)?.position.path.map { URL(fileURLWithPath: $0).lastPathComponent } ?? item.name)
+                                    .foregroundStyle(.primary).lineLimit(2)
+                                Text("From \(cloud.latestReading(item)?.deviceName ?? item.sourceDevice)")
+                                    .font(.caption).foregroundStyle(.secondary)
+                                if cloud.uploading(item) { Text("Waiting for iCloud").font(.caption).foregroundStyle(.secondary) }
+                            }.frame(minHeight: 44)
+                        }
+                        .disabled(cloud.uploading(item))
+                        .accessibilityIdentifier("continue-\(item.name)")
+                        .contextMenu {
+                            if item.storage == .linked {
+                                Button("Choose iCloud Folder") { pick(.folder, connecting: item) }
+                            }
+                        }
+                    }
+                }
+            }
             if library.folders.isEmpty {
                 Section {
                     VStack(alignment: .leading, spacing: 16) {
@@ -174,9 +250,22 @@ struct LibraryView: View {
         .overlay { if library.busy { ProgressView("Opening…").padding().background(.regularMaterial, in: RoundedRectangle(cornerRadius: 12)) } }
     }
 
-    private func open(_ folder: SavedFolder, _ path: String, fragment: String? = nil) {
-        navigation.open(FileSelection(folder: folder, path: path, fragment: fragment), compact: sizeClass == .compact)
-        library.record(folder, path: path)
+    private func open(_ folder: SavedFolder, _ path: String, fragment: String? = nil, cloudItem: CloudItem? = nil) {
+        navigation.open(FileSelection(folder: folder, path: path, fragment: fragment, cloudItem: cloudItem), compact: sizeClass == .compact)
+        if cloudItem == nil { library.record(folder, path: path) }
+    }
+
+    private func openCloud(_ item: CloudItem, position: CloudPosition? = nil) async throws {
+        let opened = try await cloud.open(item)
+        defer { withExtendedLifetime(opened.access) {} }
+        let folder: SavedFolder
+        if item.storage == .copy {
+            let remembered = try await WorkspaceIO.remember(opened.access.root)
+            folder = SavedFolder(id: item.id, name: item.folderName, bookmark: remembered.bookmark)
+        } else { folder = try await library.add(opened.access.root) }
+        let position = position ?? opened.position
+        let path = try CloudPaths.relative(position?.sanitized.path ?? item.path)
+        navigation.open(FileSelection(folder: folder, path: path, cloudItem: item, position: position), compact: sizeClass == .compact)
     }
 
     private func perform(_ operation: @escaping @MainActor () async throws -> Void) {

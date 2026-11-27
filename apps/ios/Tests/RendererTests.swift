@@ -1,4 +1,5 @@
 import SwiftUI
+import PDFKit
 import WebKit
 import XCTest
 @testable import Folio
@@ -165,6 +166,84 @@ final class RendererTests: XCTestCase {
         XCTAssertTrue(restored, "A reload with no new heading request must retain ordinary scroll restoration.")
     }
 
+    func testCloudReadingPositionSurvivesReflowAndUsesAHeadingForChangedContent() async throws {
+        let scene = try XCTUnwrap(UIApplication.shared.connectedScenes.first as? UIWindowScene)
+        let previous = scene.windows.first(where: \.isKeyWindow)
+        let window = UIWindow(windowScene: scene)
+        let controller = UIViewController()
+        let configuration = WKWebViewConfiguration()
+        configuration.websiteDataStore = .nonPersistent()
+        configuration.userContentController.addUserScript(WKUserScript(source: CloudReadingScript.tracking,
+            injectionTime: .atDocumentEnd, forMainFrameOnly: true))
+        let web = WKWebView(frame: CGRect(x: 0, y: 0, width: 390, height: 600), configuration: configuration)
+        controller.view.addSubview(web)
+        window.rootViewController = controller
+        window.makeKeyAndVisible()
+        defer { window.isHidden = true; previous?.makeKeyAndVisible() }
+        let paragraphs = (0..<80).map { "<h2 id='part-\($0)'>Part \($0)</h2><p>\(String(repeating: "Reading at another width preserves a meaningful place. ", count: 8))</p>" }.joined()
+        web.loadHTMLString("<style>article{font:18px/1.6 system-ui;padding:16px}</style><article>\(paragraphs)</article>", baseURL: nil)
+        let ready = try await waitForScript("typeof window.folioReadingLocation === 'function'", in: web)
+        XCTAssertTrue(ready)
+        guard ready else { return }
+        _ = try await web.evaluateJavaScript("window.scrollTo(0, 2400)")
+        let raw = try await web.evaluateJavaScript("window.folioReadingLocation()")
+        let body = try XCTUnwrap(raw)
+        let saved = try XCTUnwrap(CloudReadingScript.position(body, revision: "original-revision"))
+        XCTAssertGreaterThan(saved.progress, 0)
+        let block = try XCTUnwrap(saved.block)
+        web.frame.size.width = 820
+        _ = try await web.evaluateJavaScript("document.querySelector('article').style.fontSize='24px'; window.scrollTo(0,0)")
+        _ = try await web.callAsyncJavaScript("window.folioResumeReading(position, sameRevision)",
+            arguments: CloudReadingScript.arguments(saved, revision: "original-revision"), in: nil, contentWorld: .page)
+        let restored = try await waitForScript("window.folioReadingLocation().block === \(block)", in: web)
+        XCTAssertTrue(restored)
+        let changed = CloudPosition(heading: "part-40", block: 0, progress: 0, revision: "old-revision")
+        _ = try await web.callAsyncJavaScript("window.folioResumeReading(position, sameRevision)",
+            arguments: CloudReadingScript.arguments(changed, revision: "new-revision"), in: nil, contentWorld: .page)
+        let heading = try await waitForScript("Math.abs(document.getElementById('part-40').getBoundingClientRect().top) < 5", in: web)
+        XCTAssertTrue(heading)
+    }
+
+    func testNativePDFRestoresAndReportsThePage() async throws {
+        let file = FileManager.default.temporaryDirectory.appendingPathComponent("FolioPages-\(UUID().uuidString).pdf")
+        defer { try? FileManager.default.removeItem(at: file) }
+        let renderer = UIGraphicsPDFRenderer(bounds: CGRect(x: 0, y: 0, width: 612, height: 792))
+        try renderer.writePDF(to: file) { context in
+            for page in 0..<3 {
+                context.beginPage()
+                ("Page \(page + 1)" as NSString).draw(at: CGPoint(x: 30, y: 30), withAttributes: [.font: UIFont.systemFont(ofSize: 24)])
+            }
+        }
+        let scene = try XCTUnwrap(UIApplication.shared.connectedScenes.first as? UIWindowScene)
+        let previous = scene.windows.first(where: \.isKeyWindow)
+        let window = UIWindow(windowScene: scene)
+        let probe = CloudPageProbe()
+        let controller = UIHostingController(rootView: NativeReader(file: file, kind: .pdf,
+            initialPosition: CloudPosition(page: 1), positionChanged: { probe.page = $0.page }))
+        window.rootViewController = controller
+        window.makeKeyAndVisible()
+        defer { window.isHidden = true; previous?.makeKeyAndVisible() }
+        @MainActor func find(_ view: UIView) -> PDFView? {
+            if let pdf = view as? PDFView { return pdf }
+            return view.subviews.lazy.compactMap { find($0) }.first
+        }
+        var pdf: PDFView?
+        for _ in 0..<100 {
+            pdf = find(controller.view)
+            if let pdf, let document = pdf.document, let page = pdf.currentPage, document.index(for: page) == 1 { break }
+            try await Task.sleep(for: .milliseconds(50))
+        }
+        let view = try XCTUnwrap(pdf)
+        let document = try XCTUnwrap(view.document)
+        XCTAssertEqual(document.index(for: try XCTUnwrap(view.currentPage)), 1)
+        view.go(to: try XCTUnwrap(document.page(at: 2)))
+        for _ in 0..<100 {
+            if probe.page == 2 { break }
+            try await Task.sleep(for: .milliseconds(50))
+        }
+        XCTAssertEqual(probe.page, 2)
+    }
+
     private func waitForScript(_ condition: String, in web: WKWebView) async throws -> Bool {
         let deadline = ContinuousClock.now.advanced(by: .seconds(60))
         repeat {
@@ -186,4 +265,9 @@ final class RendererTests: XCTestCase {
         if let web = view as? WKWebView { return web }
         return view.subviews.lazy.compactMap { self.webView(in: $0) }.first
     }
+}
+
+@MainActor
+private final class CloudPageProbe {
+    var page: Int?
 }
