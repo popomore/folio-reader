@@ -150,6 +150,44 @@ final class WorkspaceTests: XCTestCase {
         XCTAssertEqual(store.folders.count, 2)
     }
 
+    func testCleanSessionCannotDeleteAnotherSessionsRecovery() async throws {
+        try Data("# Original".utf8).write(to: base.appendingPathComponent("note.md"))
+        let folder = try await WorkspaceIO.remember(base)
+        let storage = base.appendingPathComponent("State")
+        let clean = DocumentSession(folder: folder, path: "note.md", storage: storage)
+        let edited = DocumentSession(folder: folder, path: "note.md", storage: storage)
+        await clean.load()
+        await edited.load()
+        edited.draft = "# Latest unsaved draft"
+        await edited.persistDraft()
+        await clean.persistDraft()
+        let recovered = DocumentSession(folder: folder, path: "note.md", storage: storage)
+        await recovered.load()
+        XCTAssertTrue(recovered.recovered)
+        XCTAssertEqual(recovered.draft, "# Latest unsaved draft")
+    }
+
+    func testUndoingARecoveredCopyCannotDeleteANewerSessionsDraft() async throws {
+        try Data("# Original".utf8).write(to: base.appendingPathComponent("note.md"))
+        let folder = try await WorkspaceIO.remember(base)
+        let storage = base.appendingPathComponent("State")
+        let writer = DocumentSession(folder: folder, path: "note.md", storage: storage)
+        await writer.load()
+        writer.draft = "# First draft"
+        await writer.persistDraft()
+        let olderCopy = DocumentSession(folder: folder, path: "note.md", storage: storage)
+        await olderCopy.load()
+        XCTAssertEqual(olderCopy.draft, "# First draft")
+        writer.draft = "# Newer draft from another session"
+        await writer.persistDraft()
+        olderCopy.draft = "# Original"
+        await olderCopy.persistDraft()
+        let recovered = DocumentSession(folder: folder, path: "note.md", storage: storage)
+        await recovered.load()
+        XCTAssertTrue(recovered.recovered)
+        XCTAssertEqual(recovered.draft, "# Newer draft from another session")
+    }
+
     func testSuccessfulSaveClearsTheRecoveryDraft() async throws {
         try Data("# Original".utf8).write(to: base.appendingPathComponent("note.md"))
         let folder = try await WorkspaceIO.remember(base)
@@ -166,6 +204,43 @@ final class WorkspaceTests: XCTestCase {
         XCTAssertFalse(restored.recovered)
         XCTAssertFalse(restored.hasChanges)
         XCTAssertEqual(restored.draft, "# Saved draft")
+    }
+
+    func testLegacyRecoveryRecordCanBeRecoveredAndClearedAfterUndo() async throws {
+        try Data("# Original".utf8).write(to: base.appendingPathComponent("note.md"))
+        let folder = try await WorkspaceIO.remember(base)
+        let storage = base.appendingPathComponent("State")
+        let opened = try await WorkspaceIO.open(folder, path: "note.md")
+        let revision = try XCTUnwrap(opened.document.revision)
+        let key = "\(folder.id)/note.md"
+        let drafts = DraftStore.shared(directory: storage.appendingPathComponent("Drafts"))
+        try await drafts.write(DraftRecord(source: "# Legacy draft", revision: revision), key: key)
+        let files = try FileManager.default.contentsOfDirectory(at: storage.appendingPathComponent("Drafts"),
+                                                                includingPropertiesForKeys: nil)
+        let legacy = try XCTUnwrap(files.first)
+        let json = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(contentsOf: legacy)) as? [String: Any])
+        XCTAssertNil(json["owner"], "The fixture must retain the previous two-field format.")
+        let session = DocumentSession(folder: folder, path: "note.md", storage: storage)
+        await session.load()
+        XCTAssertTrue(session.recovered)
+        XCTAssertEqual(session.draft, "# Legacy draft")
+        session.draft = "# Original"
+        await session.persistDraft()
+        let reopened = DocumentSession(folder: folder, path: "note.md", storage: storage)
+        await reopened.load()
+        XCTAssertFalse(reopened.recovered)
+        XCTAssertEqual(reopened.draft, "# Original")
+    }
+
+    func testEquivalentDraftDirectoriesUseTheSameActorAfterCreation() async throws {
+        let directory = base.appendingPathComponent("State/Drafts")
+        let first = DraftStore.shared(directory: directory)
+        try await first.write(DraftRecord(source: "Fixture", revision: "Fixture revision"), key: "fixture")
+        let withDirectoryHint = URL(fileURLWithPath: directory.path, isDirectory: true)
+        XCTAssertTrue(DraftStore.shared(directory: withDirectoryHint) === first)
+        let alias = base.appendingPathComponent("Drafts Alias")
+        try FileManager.default.createSymbolicLink(at: alias, withDestinationURL: directory)
+        XCTAssertTrue(DraftStore.shared(directory: alias) === first)
     }
 
     func testUndoingAllEditsRemovesTheRecoveryDraft() async throws {

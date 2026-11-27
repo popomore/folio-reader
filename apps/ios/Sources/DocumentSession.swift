@@ -6,6 +6,7 @@ final class DocumentSession {
     let folder: SavedFolder
     let path: String
     private let drafts: DraftStore
+    private let draftOwner = UUID()
     private let readFile: @Sendable (SavedFolder, String) async throws -> OpenedFile
     private var draftTask: Task<Void, Never>?
     private var loadInFlight = false
@@ -30,7 +31,7 @@ final class DocumentSession {
         self.folder = folder
         self.path = path
         self.readFile = readFile
-        drafts = DraftStore(directory: storage.appendingPathComponent("Drafts"))
+        drafts = DraftStore.shared(directory: storage.appendingPathComponent("Drafts"))
     }
 
     func load() async {
@@ -46,9 +47,9 @@ final class DocumentSession {
             original = opened.document.source ?? ""
             draft = original
             recovered = false
-            if let saved = try await drafts.read(key), opened.document.revision != nil {
+            if opened.document.revision != nil, let saved = try await drafts.recover(key, owner: draftOwner) {
                 if saved.source == original {
-                    try await drafts.remove(key)
+                    try await drafts.remove(key, owner: draftOwner)
                 } else {
                     draft = saved.source
                     revision = saved.revision
@@ -75,10 +76,11 @@ final class DocumentSession {
     }
 
     func persistDraft() async {
-        guard let revision else { return }
+        guard let revision, !loading else { return }
         do {
-            if hasChanges { try await drafts.write(DraftRecord(source: draft, revision: revision), key: key) }
-            else { try await drafts.remove(key) }
+            if hasChanges {
+                try await drafts.write(DraftRecord(source: draft, revision: revision, owner: draftOwner), key: key)
+            } else { try await drafts.remove(key, owner: draftOwner) }
         } catch { self.error = "Your recovery draft could not be updated: \(error.localizedDescription)" }
     }
 
@@ -99,7 +101,7 @@ final class DocumentSession {
             saving = false
             return false
         }
-        do { try await drafts.remove(key) }
+        do { try await drafts.remove(key, owner: draftOwner) }
         catch { self.error = "The file was saved, but its recovery copy could not be removed: \(error.localizedDescription)" }
         do { opened = try await WorkspaceIO.open(folder, path: path) }
         catch { self.error = "The file was saved, but its preview could not be reloaded: \(error.localizedDescription)" }
@@ -111,7 +113,7 @@ final class DocumentSession {
         draftTask?.cancel()
         await draftTask?.value
         do {
-            try await drafts.remove(key)
+            try await drafts.remove(key, owner: draftOwner)
             recovered = false
             draft = original
             editing = false

@@ -96,12 +96,30 @@ final class LibraryStore {
 struct DraftRecord: Codable, Sendable {
     let source: String
     let revision: String
+    let owner: UUID?
+
+    init(source: String, revision: String, owner: UUID? = nil) {
+        self.source = source
+        self.revision = revision
+        self.owner = owner
+    }
 }
 
 actor DraftStore {
+    @MainActor private static var stores: [[String]: DraftStore] = [:]
     let directory: URL
 
-    init(directory: URL) { self.directory = directory }
+    private init(directory: URL) { self.directory = directory }
+
+    @MainActor
+    static func shared(directory: URL) -> DraftStore {
+        let directory = directory.resolvingSymlinksInPath().standardizedFileURL
+        let key = directory.pathComponents.filter { $0 != "/" }
+        if let store = stores[key] { return store }
+        let store = DraftStore(directory: directory)
+        stores[key] = store
+        return store
+    }
 
     func read(_ key: String) throws -> DraftRecord? {
         let url = location(key)
@@ -114,7 +132,15 @@ actor DraftStore {
         try JSONEncoder().encode(record).write(to: location(key), options: [.atomic, .completeFileProtectionUnlessOpen])
     }
 
-    func remove(_ key: String) throws {
+    func recover(_ key: String, owner: UUID) throws -> DraftRecord? {
+        guard let record = try read(key) else { return nil }
+        let recovered = DraftRecord(source: record.source, revision: record.revision, owner: owner)
+        try write(recovered, key: key)
+        return recovered
+    }
+
+    func remove(_ key: String, owner: UUID) throws {
+        guard let record = try read(key), record.owner == owner else { return }
         let url = location(key)
         if FileManager.default.fileExists(atPath: url.path) { try FileManager.default.removeItem(at: url) }
     }
