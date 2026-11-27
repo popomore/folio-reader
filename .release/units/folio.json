@@ -18,5 +18,8 @@
     "Cargo.lock",
     "rust-toolchain.toml",
     ".node-version"
-  ]
+  ],
+  "versioning": "semantic-release",
+  "prerelease": "preview",
+  "preview_tag_compatibility": "timestamp"
 }

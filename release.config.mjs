@@ -1,8 +1,3 @@
-export default {
-  branches: [{ name: 'release', channel: false }],
-  tagFormat: 'v${version}',
-  plugins: [
-    ['@semantic-release/commit-analyzer', { preset: 'conventionalcommits' }],
-    './scripts/semantic-release/macos.mjs',
-  ],
-};
+import { appleReleaseConfig } from '@popomore/github-actions/release/apple';
+
+export default appleReleaseConfig({ publisher: './scripts/semantic-release/macos.mjs' });

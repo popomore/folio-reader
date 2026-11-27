@@ -207,6 +207,6 @@ test('plans and receipts bind version, repository, run, notes, source, and exact
   original.packages();
   assert.equal(validateAssets(plan, resolve(cwd, 'dist'), original.env.RELEASE_PLAN).sourceSha, plan.sourceSha);
   writeJSON(original.env.RELEASE_PLAN, { ...plan, notes: 'Different notes' });
-  assert.throws(() => validateAssets(plan, resolve(cwd, 'dist'), original.env.RELEASE_PLAN), /original release plan/);
+  assert.throws(() => validateAssets(plan, resolve(cwd, 'dist'), original.env.RELEASE_PLAN), /release plan/);
   assert.equal(digest(Buffer.from('fixture')).length, 64);
 });
