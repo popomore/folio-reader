@@ -12,6 +12,7 @@ devices.sort(key=lambda d: (d["state"] != "Booted", "Pro" not in d["name"], d["n
 print(devices[0]["udid"])
 ')"
 fi
+xcrun simctl bootstatus "$device" -b
 check=(xcodebuild -project apps/ios/Folio.xcodeproj -scheme Folio -configuration Debug \
   -derivedDataPath "$PWD/.build/ios" -destination "platform=iOS Simulator,id=$device" \
   -parallel-testing-enabled NO -maximum-concurrent-test-simulator-destinations 1 \

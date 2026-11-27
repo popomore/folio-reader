@@ -55,11 +55,7 @@ final class RendererTests: XCTestCase {
         document.querySelectorAll('.diagram svg').length === 2 &&
         document.querySelector('img[alt="local"]')?.naturalWidth > 0
         """
-        var complete = false
-        for _ in 0..<150 {
-            if (try? await web.evaluateJavaScript(condition)) as? Bool == true { complete = true; break }
-            try await Task.sleep(for: .milliseconds(100))
-        }
+        let complete = try await waitForScript(condition, in: web)
         let diagnostics = (try? await web.evaluateJavaScript("document.body.innerText")) as? String ?? "No page"
         XCTAssertTrue(complete, diagnostics)
         let safe = try await web.evaluateJavaScript("window.folioAttack !== true && document.querySelectorAll('.diagram-error').length === 0 && document.querySelector('img[alt=blocked]').naturalWidth === 0")
@@ -91,10 +87,9 @@ final class RendererTests: XCTestCase {
         window.makeKeyAndVisible()
         defer { window.isHidden = true; previous?.makeKeyAndVisible() }
         let web = try await waitForWebView(in: controller.view)
-        for _ in 0..<80 {
-            if (try? await web.evaluateJavaScript("!!document.querySelector('a')")) as? Bool == true { break }
-            try await Task.sleep(for: .milliseconds(100))
-        }
+        let sourceReady = try await waitForScript("document.readyState === 'complete' && !!document.querySelector('a')", in: web)
+        XCTAssertTrue(sourceReady, "The source page must finish loading before its link is clicked.")
+        guard sourceReady else { return }
         _ = try await web.evaluateJavaScript("document.querySelector('a').click()")
         for _ in 0..<50 {
             if followed != nil { break }
@@ -109,18 +104,22 @@ final class RendererTests: XCTestCase {
             .environment(ReaderPreferences(defaults: UserDefaults(suiteName: "FolioLinks.\(UUID())")!)))
         window.rootViewController = destination
         let destinationWeb = try await waitForWebView(in: destination.view)
-        var landed = false
-        for _ in 0..<100 {
-            let result = try? await destinationWeb.evaluateJavaScript("""
+        let landed = try await waitForScript("""
             (() => {
               const heading = document.getElementById('详情');
               return !!heading && window.scrollY > 300 && heading.getBoundingClientRect().top >= 0 && heading.getBoundingClientRect().top < 100;
             })()
-            """)
-            if result as? Bool == true { landed = true; break }
-            try await Task.sleep(for: .milliseconds(100))
-        }
+            """, in: destinationWeb)
         XCTAssertTrue(landed, "The destination reader must scroll to the decoded heading after its page loads.")
+    }
+
+    private func waitForScript(_ condition: String, in web: WKWebView) async throws -> Bool {
+        let deadline = ContinuousClock.now.advanced(by: .seconds(60))
+        repeat {
+            if (try? await web.evaluateJavaScript(condition)) as? Bool == true { return true }
+            try await Task.sleep(for: .milliseconds(100))
+        } while ContinuousClock.now < deadline
+        return false
     }
 
     private func waitForWebView(in view: UIView) async throws -> WKWebView {

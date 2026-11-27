@@ -81,7 +81,8 @@ cargo test --locked -p folio-bridge --no-default-features
 ```
 
 `scripts/check-ios` uses a booted iPhone or another available iPhone when no UUID
-is supplied. Set the UUID to an iPad to run the same suite against the split-view
+is supplied, and waits for the selected simulator to finish booting before
+starting XCTest. Set the UUID to an iPad to run the same suite against the split-view
 layout. The suite includes coordinated read/write, content conflicts, selected
 folder boundaries, import copies, persisted bookmarks, native snapshot limits,
 draft recovery, and native UI navigation, rendering, saving, cancellation,

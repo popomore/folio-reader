@@ -4,6 +4,7 @@ import UIKit
 @MainActor
 final class ReaderTests: XCTestCase {
     private var app: XCUIApplication!
+    private let documentTimeout: TimeInterval = 60
 
     override func setUp() {
         continueAfterFailure = false
@@ -15,22 +16,22 @@ final class ReaderTests: XCTestCase {
         sample()
         tapFile("Welcome.md")
         let heading = app.webViews.staticTexts["A place for your project files"]
-        XCTAssertTrue(heading.waitForExistence(timeout: 20))
+        XCTAssertTrue(heading.waitForExistence(timeout: documentTimeout))
         screenshot("Markdown reader")
         app.buttons["Document Outline"].tap()
         XCTAssertTrue(app.navigationBars["Contents"].waitForExistence(timeout: 5))
         app.buttons["Your next thought"].tap()
-        XCTAssertTrue(app.webViews.staticTexts["Your next thought"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.webViews.staticTexts["Your next thought"].waitForExistence(timeout: documentTimeout))
         screenshot("Document outline navigation")
         relaunchSample()
         tapFile("Welcome.md")
         let link = app.webViews.links["Field Notes"]
-        XCTAssertTrue(link.waitForExistence(timeout: 20))
+        XCTAssertTrue(link.waitForExistence(timeout: documentTimeout))
         link.tap()
-        XCTAssertTrue(app.webViews.staticTexts["Field Notes"].waitForExistence(timeout: 10))
+        XCTAssertTrue(app.webViews.staticTexts["Field Notes"].waitForExistence(timeout: documentTimeout))
         if UIDevice.current.userInterfaceIdiom == .phone {
             app.navigationBars.buttons["BackButton"].firstMatch.tap()
-            XCTAssertTrue(app.webViews.staticTexts["A place for your project files"].waitForExistence(timeout: 10))
+            XCTAssertTrue(app.webViews.staticTexts["A place for your project files"].waitForExistence(timeout: documentTimeout))
         }
     }
 
@@ -44,10 +45,10 @@ final class ReaderTests: XCTestCase {
         editor.tap()
         editor.typeText("\nSaved from the iOS UI test.\n")
         app.buttons["Save"].tap()
-        XCTAssertTrue(preview(containing: "Saved from the iOS UI test.").waitForExistence(timeout: 15))
+        XCTAssertTrue(preview(containing: "Saved from the iOS UI test.").waitForExistence(timeout: documentTimeout))
         relaunchSample()
         notes()
-        XCTAssertTrue(preview(containing: "Saved from the iOS UI test.").waitForExistence(timeout: 15))
+        XCTAssertTrue(preview(containing: "Saved from the iOS UI test.").waitForExistence(timeout: documentTimeout))
         screenshot("Saved document after relaunch")
     }
 
@@ -75,7 +76,7 @@ final class ReaderTests: XCTestCase {
         sample()
         tapFile("Data")
         tapFile("Data/reading-list.csv")
-        XCTAssertTrue(app.webViews.staticTexts["In progress"].waitForExistence(timeout: 15))
+        XCTAssertTrue(app.webViews.staticTexts["In progress"].waitForExistence(timeout: documentTimeout))
         screenshot("CSV table")
         relaunchSample()
         tapFile("Reference.pdf")
@@ -122,7 +123,7 @@ final class ReaderTests: XCTestCase {
         app.buttons["Done"].tap()
         tap(app.buttons["Explore Sample Folder"])
         tapFile("Welcome.md")
-        XCTAssertTrue(app.webViews.staticTexts["A place for your project files"].waitForExistence(timeout: 20))
+        XCTAssertTrue(app.webViews.staticTexts["A place for your project files"].waitForExistence(timeout: documentTimeout))
         screenshot("Dark reader")
     }
 

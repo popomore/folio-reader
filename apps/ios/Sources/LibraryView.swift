@@ -1,16 +1,16 @@
 import SwiftUI
 import UniformTypeIdentifiers
 
-private enum PickerMode: String, Identifiable {
+private enum PickerMode {
     case folder, files
-    var id: String { rawValue }
 }
 
 struct LibraryView: View {
     @Environment(LibraryStore.self) private var library
     @Environment(\.horizontalSizeClass) private var sizeClass
     @State private var navigation = LibraryNavigation()
-    @State private var picker: PickerMode?
+    @State private var pickerMode: PickerMode = .folder
+    @State private var showingPicker = false
     @State private var settings = false
 
     var body: some View {
@@ -34,17 +34,23 @@ struct LibraryView: View {
                 .navigationSplitViewStyle(.balanced)
             }
         }
-        .sheet(item: $picker) { mode in
-            DocumentPicker(folder: mode == .folder) { urls in
-                picker = nil
+        .fileImporter(isPresented: $showingPicker,
+                      allowedContentTypes: pickerMode == .folder ? [.folder] : [.item],
+                      allowsMultipleSelection: pickerMode == .files) { result in
+            switch result {
+            case .success(let urls):
                 perform {
-                    if mode == .folder, let url = urls.first {
+                    if pickerMode == .folder, let url = urls.first {
                         let folder = try await library.add(url)
                         show(folder)
                     } else if !urls.isEmpty {
                         let folder = try await library.importFiles(urls)
                         show(folder)
                     }
+                }
+            case .failure(let error):
+                if (error as? CocoaError)?.code != .userCancelled {
+                    library.error = error.localizedDescription
                 }
             }
         }
@@ -83,11 +89,16 @@ struct LibraryView: View {
                 }
                 ToolbarItem(placement: .primaryAction) {
                     Menu {
-                        Button("Add Folder", systemImage: "folder.badge.plus") { picker = .folder }
-                        Button("Import Files", systemImage: "square.and.arrow.down") { picker = .files }
+                        Button("Add Folder", systemImage: "folder.badge.plus") { pick(.folder) }
+                        Button("Import Files", systemImage: "square.and.arrow.down") { pick(.files) }
                     } label: { Label("Add", systemImage: "plus") }
                 }
             }
+    }
+
+    private func pick(_ mode: PickerMode) {
+        pickerMode = mode
+        showingPicker = true
     }
 
     private func document(_ selection: FileSelection) -> some View {
@@ -109,10 +120,10 @@ struct LibraryView: View {
                         Text("Your files, ready to read.").font(.title2.weight(.semibold))
                         Text("Keep project notes, documents, and reference files together.")
                             .foregroundStyle(.secondary)
-                        Button { picker = .folder } label: {
+                        Button { pick(.folder) } label: {
                             Label("Add Folder", systemImage: "folder.badge.plus").frame(maxWidth: .infinity, minHeight: 36)
                         }.buttonStyle(.borderedProminent)
-                        Button { picker = .files } label: {
+                        Button { pick(.files) } label: {
                             Label("Import Files", systemImage: "square.and.arrow.down").frame(maxWidth: .infinity, minHeight: 36)
                         }.buttonStyle(.bordered)
                     }.padding(.vertical, 16)
@@ -247,24 +258,5 @@ struct FolderBrowser: View {
         do { entries = try await WorkspaceIO.list(folder, path: path) }
         catch { failure = error.localizedDescription }
         loading = false
-    }
-}
-
-private struct DocumentPicker: UIViewControllerRepresentable {
-    let folder: Bool
-    let picked: ([URL]) -> Void
-    func makeCoordinator() -> Coordinator { Coordinator(picked: picked) }
-    func makeUIViewController(context: Context) -> UIDocumentPickerViewController {
-        let view = UIDocumentPickerViewController(forOpeningContentTypes: folder ? [.folder] : [.item], asCopy: false)
-        view.allowsMultipleSelection = !folder
-        view.delegate = context.coordinator
-        return view
-    }
-    func updateUIViewController(_ controller: UIDocumentPickerViewController, context: Context) {}
-    final class Coordinator: NSObject, UIDocumentPickerDelegate {
-        let picked: ([URL]) -> Void
-        init(picked: @escaping ([URL]) -> Void) { self.picked = picked }
-        func documentPicker(_ controller: UIDocumentPickerViewController, didPickDocumentsAt urls: [URL]) { picked(urls) }
-        func documentPickerWasCancelled(_ controller: UIDocumentPickerViewController) { picked([]) }
     }
 }
