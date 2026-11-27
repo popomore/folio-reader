@@ -4,7 +4,7 @@
 
 <h1 align="center">Folio</h1>
 
-Folio is an open-source macOS reader for local project files. Browse saved folders, read documents side by side, and make small edits without leaving the workspace. The Rust core can also be embedded in other applications.
+Folio is an open-source reader for local project files. Browse saved folders, read documents, and make small edits without leaving the workspace. The macOS app supports tabs and split panes; the iPhone and iPad app uses native folder navigation and currently builds from source. The Rust core can also be embedded in other applications.
 
 ## Highlights
 
@@ -14,7 +14,7 @@ Folio is an open-source macOS reader for local project files. Browse saved folde
 - **Edit in place.** Switch between reading, source, and source with live preview. Use Command-S to save.
 - **Preview from Finder or Raycast.** Press Space in Finder for Quick Look, or use the bundled CLI to open a floating Folio preview.
 
-## Install
+## Install on macOS
 
 Folio builds for Apple Silicon and requires macOS 14 or later. Download a build from [GitHub Releases](https://github.com/popomore/folio-reader/releases), open the DMG, and drag the app to Applications. Releases marked **Pre-release** are preview builds.
 
@@ -90,7 +90,7 @@ By default, `folio` and `folio preview` start a separate Folio process with an i
 
 To use Raycast, add [integrations/raycast](integrations/raycast) to its Script Commands and run **Preview in Folio**.
 
-## Build from source
+## Build macOS from source
 
 Use an Apple Silicon Mac with Xcode 27.2 and the Rust and Node toolchains pinned in the repository.
 
@@ -107,6 +107,27 @@ scripts/check-quicklook "$app"
 scripts/check-model-preview "$app"
 scripts/check-archive-preview "$app"
 ```
+
+## Build iOS from source
+
+The iOS app supports iPhone and iPad on iOS 17 or later. Add a folder from Files
+to read and edit in place, or import individual files to keep a copy in Folio.
+It includes Markdown, source text, HTML, tables, Mermaid and Vega-Lite previews,
+native PDF, image and media readers, and revision-checked Markdown/text editing
+with recovery drafts. Git, archive browsing, and interactive 3D previews remain
+macOS features.
+
+```sh
+rustup target add aarch64-apple-ios aarch64-apple-ios-sim
+scripts/build-ios simulator
+scripts/check-ios
+scripts/build-ios device
+```
+
+Open `apps/ios/Folio.xcodeproj` and select the **Folio** scheme to run from Xcode.
+Device installation needs your signing team; the command-line device build only
+checks compilation. See the [iOS development guide](docs/ios.md) for setup,
+simulator selection, file-access behavior, and validation boundaries.
 
 ## Embed the Rust core
 

@@ -1,0 +1,22 @@
+#!/usr/bin/env bash
+set -euo pipefail
+cd "$(dirname "$0")/.."
+device="${FOLIO_IOS_SIMULATOR:-}"
+if [[ -z "$device" ]]; then
+  device="$(xcrun simctl list devices available -j | python3 -c '
+import json, sys
+devices = [d for group in json.load(sys.stdin)["devices"].values() for d in group if d["name"].startswith("iPhone ")]
+if not devices:
+    sys.exit("Install an iPhone simulator runtime in Xcode, or set FOLIO_IOS_SIMULATOR.")
+devices.sort(key=lambda d: (d["state"] != "Booted", "Pro" not in d["name"], d["name"]))
+print(devices[0]["udid"])
+')"
+fi
+check=(xcodebuild -project apps/ios/Folio.xcodeproj -scheme Folio -configuration Debug \
+  -derivedDataPath "$PWD/.build/ios" -destination "platform=iOS Simulator,id=$device" \
+  -parallel-testing-enabled NO -maximum-concurrent-test-simulator-destinations 1 \
+  CODE_SIGNING_ALLOWED=NO test)
+if [[ -n "${FOLIO_IOS_RESULT_BUNDLE:-}" ]]; then
+  check+=(-resultBundlePath "$FOLIO_IOS_RESULT_BUNDLE")
+fi
+"${check[@]}"

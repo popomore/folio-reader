@@ -1,0 +1,148 @@
+import XCTest
+
+@MainActor
+final class ReaderTests: XCTestCase {
+    private var app: XCUIApplication!
+
+    override func setUp() {
+        continueAfterFailure = false
+        app = XCUIApplication()
+        app.launchEnvironment["FOLIO_UI_TEST_LIBRARY"] = UUID().uuidString
+    }
+
+    func testBrowseMarkdownOutlineAndRelativeLink() {
+        sample()
+        file("Welcome.md").tap()
+        let heading = app.webViews.staticTexts["A place for your project files"]
+        XCTAssertTrue(heading.waitForExistence(timeout: 20))
+        screenshot("Markdown reader")
+        app.buttons["Document Outline"].tap()
+        XCTAssertTrue(app.navigationBars["Contents"].waitForExistence(timeout: 5))
+        app.buttons["Your next thought"].tap()
+        XCTAssertTrue(app.webViews.staticTexts["Your next thought"].waitForExistence(timeout: 5))
+        screenshot("Document outline navigation")
+        relaunchSample()
+        file("Welcome.md").tap()
+        let link = app.webViews.links["Field Notes"]
+        XCTAssertTrue(link.waitForExistence(timeout: 20))
+        link.tap()
+        XCTAssertTrue(app.webViews.staticTexts["Field Notes"].waitForExistence(timeout: 10))
+    }
+
+    func testEditSaveAndReopen() {
+        sample()
+        notes()
+        XCTAssertTrue(app.buttons["Edit Document"].waitForExistence(timeout: 10))
+        app.buttons["Edit Document"].tap()
+        let editor = app.textViews["document-source"]
+        XCTAssertTrue(editor.waitForExistence(timeout: 5))
+        editor.tap()
+        editor.typeText("\nSaved from the iOS UI test.\n")
+        app.buttons["Save"].tap()
+        XCTAssertTrue(preview(containing: "Saved from the iOS UI test.").waitForExistence(timeout: 15))
+        relaunchSample()
+        notes()
+        XCTAssertTrue(preview(containing: "Saved from the iOS UI test.").waitForExistence(timeout: 15))
+        screenshot("Saved document after relaunch")
+    }
+
+    func testCancelProtectsAnUnsavedDraft() {
+        sample()
+        notes()
+        app.buttons["Edit Document"].tap()
+        let editor = app.textViews["document-source"]
+        XCTAssertTrue(editor.waitForExistence(timeout: 5))
+        editor.tap()
+        editor.typeText("\nDo not save this draft.\n")
+        app.buttons["Cancel"].tap()
+        XCTAssertTrue(app.buttons["Keep Editing"].waitForExistence(timeout: 5))
+        app.buttons["Keep Editing"].tap()
+        XCTAssertTrue((editor.value as? String)?.contains("Do not save this draft.") == true)
+        app.buttons["Cancel"].tap()
+        app.buttons["Discard Changes"].tap()
+        XCTAssertTrue(app.buttons["Edit Document"].waitForExistence(timeout: 10))
+        app.buttons["Edit Document"].tap()
+        XCTAssertTrue(editor.waitForExistence(timeout: 5))
+        XCTAssertFalse((editor.value as? String)?.contains("Do not save this draft.") == true)
+    }
+
+    func testTablePDFAndImagePreviews() {
+        sample()
+        file("Data").tap()
+        file("Data/reading-list.csv").tap()
+        XCTAssertTrue(app.webViews.staticTexts["In progress"].waitForExistence(timeout: 15))
+        screenshot("CSV table")
+        relaunchSample()
+        file("Reference.pdf").tap()
+        XCTAssertTrue(app.descendants(matching: .any)["pdf-preview"].waitForExistence(timeout: 15))
+        screenshot("PDF reader")
+        relaunchSample()
+        file("Images").tap()
+        file("Images/folio.png").tap()
+        XCTAssertTrue(app.images["folio.png"].waitForExistence(timeout: 15))
+        screenshot("Image reader")
+    }
+
+    func testFolderSearchAndSystemPickerCancellation() {
+        sample()
+        let search = app.searchFields.firstMatch
+        if !search.exists { app.swipeDown() }
+        XCTAssertTrue(search.waitForExistence(timeout: 5))
+        search.tap()
+        search.typeText("Welcome")
+        XCTAssertTrue(file("Welcome.md").waitForExistence(timeout: 5))
+        XCTAssertFalse(file("Reference.pdf").exists)
+        app.terminate()
+        app.launch()
+        app.buttons["Add"].tap()
+        app.buttons["Add Folder"].tap()
+        XCTAssertTrue(app.buttons["Cancel"].waitForExistence(timeout: 10))
+        screenshot("System folder picker")
+        app.buttons["Cancel"].tap()
+        XCTAssertTrue(app.buttons["Explore Sample Folder"].waitForExistence(timeout: 5))
+    }
+
+    func testReadingSettingsAndDarkAppearance() {
+        app.launch()
+        app.buttons["Reading Settings"].tap()
+        XCTAssertTrue(app.navigationBars["Reading Settings"].waitForExistence(timeout: 5))
+        app.buttons["appearance-picker"].tap()
+        app.buttons["Dark"].tap()
+        app.switches["Serif Font"].tap()
+        screenshot("Dark reading settings")
+        app.buttons["Done"].tap()
+        app.buttons["Explore Sample Folder"].tap()
+        file("Welcome.md").tap()
+        XCTAssertTrue(app.webViews.staticTexts["A place for your project files"].waitForExistence(timeout: 20))
+        screenshot("Dark reader")
+    }
+
+    private func sample() {
+        app.launch()
+        XCTAssertTrue(app.buttons["Explore Sample Folder"].waitForExistence(timeout: 10))
+        app.buttons["Explore Sample Folder"].tap()
+        XCTAssertTrue(file("Welcome.md").waitForExistence(timeout: 10))
+    }
+
+    private func relaunchSample() { app.terminate(); sample() }
+
+    private func file(_ path: String) -> XCUIElement {
+        app.descendants(matching: .any).matching(identifier: "file:\(path)").firstMatch
+    }
+
+    private func notes() {
+        file("Notes").tap()
+        file("Notes/Field Notes.md").tap()
+    }
+
+    private func preview(containing text: String) -> XCUIElement {
+        app.webViews.staticTexts.containing(NSPredicate(format: "label CONTAINS %@", text)).firstMatch
+    }
+
+    private func screenshot(_ name: String) {
+        let attachment = XCTAttachment(screenshot: app.screenshot())
+        attachment.name = name
+        attachment.lifetime = .keepAlways
+        add(attachment)
+    }
+}

@@ -9,6 +9,9 @@ on:
       macos:
         required: true
         type: string
+      ios:
+        required: true
+        type: string
       release-tools:
         required: true
         type: string
@@ -20,12 +23,14 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
-      - name: Require Rust, macOS, and release checks to pass
+      - name: Require Rust, macOS, iOS, and release checks to pass
         env:
           RUST_RESULT: ${{ inputs.rust }}
           MACOS_RESULT: ${{ inputs.macos }}
+          IOS_RESULT: ${{ inputs.ios }}
           RELEASE_RESULT: ${{ inputs.release-tools }}
         run: |
           test "$RUST_RESULT" = success
           test "$MACOS_RESULT" = success
+          test "$IOS_RESULT" = success
           test "$RELEASE_RESULT" = success

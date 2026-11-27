@@ -1,6 +1,6 @@
 import Foundation
 
-enum FileKind: String, Decodable {
+enum FileKind: String, Decodable, Sendable {
     case markdown, text, html, rtf, pdf, image, audio, video, model, archive, table, mermaid, vega, other
 
     var label: String {
@@ -41,14 +41,14 @@ struct Entry: Decodable, Identifiable, Sendable {
     var id: String { path }
 }
 
-struct Heading: Decodable, Identifiable {
+struct Heading: Decodable, Identifiable, Sendable {
     let id: String
     let title: String
     let level: Int
 }
 
-struct Document: Decodable {
-    struct Preview: Decodable {
+struct Document: Decodable, Sendable {
+    struct Preview: Decodable, Sendable {
         let html: String
         let headings: [Heading]
     }

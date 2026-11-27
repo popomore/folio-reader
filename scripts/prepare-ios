@@ -1,0 +1,36 @@
+#!/usr/bin/env bash
+set -euo pipefail
+cd "$(dirname "$0")/.."
+export PATH="$HOME/.cargo/bin:/opt/homebrew/bin:/usr/local/bin:$PATH"
+export CARGO_TARGET_DIR="$PWD/target"
+export IPHONEOS_DEPLOYMENT_TARGET=17.0
+
+case "${PLATFORM_NAME:?Run through the Folio Xcode target}:${CURRENT_ARCH:-arm64}" in
+  iphonesimulator:x86_64) target=x86_64-apple-ios ;;
+  iphonesimulator:*) target=aarch64-apple-ios-sim ;;
+  iphoneos:*) target=aarch64-apple-ios ;;
+  *) echo "Unsupported iOS platform." >&2; exit 1 ;;
+esac
+profile=debug
+build=(build --locked -p folio-bridge --no-default-features --target "$target")
+if [[ "${CONFIGURATION:-Debug}" == Release ]]; then
+  profile=release
+  build+=(--release)
+fi
+version="$(sed -n 's/^channel = "\(.*\)"$/\1/p' rust-toolchain.toml)"
+rustup run "$version" cargo "${build[@]}"
+mkdir -p "$BUILT_PRODUCTS_DIR"
+cp "$CARGO_TARGET_DIR/$target/$profile/libfolio_bridge.a" "$BUILT_PRODUCTS_DIR/libfolio_ios.a"
+
+mkdir -p .build/ios-resources
+lock="$(shasum -a 256 renderer/package-lock.json | cut -d ' ' -f 1)"
+if [[ ! -d renderer/node_modules || ! -f .build/ios-resources/renderer-lock || "$(cat .build/ios-resources/renderer-lock)" != "$lock" ]]; then
+  npm ci --prefix renderer --ignore-scripts --no-audit --no-fund
+  printf '%s\n' "$lock" > .build/ios-resources/renderer-lock
+fi
+npm run --prefix renderer build -- "$PWD/.build/ios-resources"
+resources="$TARGET_BUILD_DIR/$UNLOCALIZED_RESOURCES_FOLDER_PATH"
+mkdir -p "$resources"
+cp .build/ios-resources/reader.js* "$resources/"
+cp apps/macos/Resources/{reader.css,page.js} "$resources/"
+ditto apps/macos/Themes "$resources/Themes"

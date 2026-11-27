@@ -1,0 +1,13 @@
+#!/usr/bin/env bash
+set -euo pipefail
+cd "$(dirname "$0")/.."
+mode="${1:-simulator}"
+case "$mode" in
+  simulator) destination='generic/platform=iOS Simulator'; product=Debug-iphonesimulator ;;
+  device) destination='generic/platform=iOS'; product=Debug-iphoneos ;;
+  *) echo "Usage: scripts/build-ios [simulator|device]" >&2; exit 2 ;;
+esac
+xcodebuild -project apps/ios/Folio.xcodeproj -scheme Folio -configuration Debug \
+  -derivedDataPath "$PWD/.build/ios" -destination "$destination" \
+  CODE_SIGNING_ALLOWED=NO build >&2
+printf '%s\n' "$PWD/.build/ios/Build/Products/$product/Folio.app"
