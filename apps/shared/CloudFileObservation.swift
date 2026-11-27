@@ -34,7 +34,7 @@ final class CloudFileObservation: NSObject, NSFilePresenter, @unchecked Sendable
             NotificationCenter.default.addObserver(forName: UIApplication.didEnterBackgroundNotification,
                 object: nil, queue: .main) { [weak self] _ in self?.setRegistered(false) },
             NotificationCenter.default.addObserver(forName: UIApplication.willEnterForegroundNotification,
-                object: nil, queue: .main) { [weak self] _ in self?.setRegistered(true) },
+                object: nil, queue: .main) { [weak self] _ in self?.setRegistered(true); self?.notify(nil) },
         ]
         setRegistered(UIApplication.shared.applicationState != .background)
         #else

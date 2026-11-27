@@ -82,6 +82,56 @@ final class AsyncStateTests: XCTestCase {
         XCTAssertTrue(compact.session(storage: storage) === original)
     }
 
+    func testObservationResumeReloadsCleanContentAndPreservesAnUnsavedDraft() async throws {
+        let file = base.appendingPathComponent("note.md")
+        try Data("# First".utf8).write(to: file)
+        let folder = try await WorkspaceIO.remember(base)
+        let session = DocumentSession(folder: folder, path: "note.md", storage: base.appendingPathComponent("State"))
+        await session.resumeObservation()
+        await session.loadIfNeeded()
+        session.stopObservation()
+        try Data("# Changed while away".utf8).write(to: file)
+        await session.resumeObservation()
+        XCTAssertEqual(session.draft, "# Changed while away")
+        session.beginEditing()
+        session.draft = "# Keep my draft"
+        session.stopObservation()
+        try Data("# Another external change".utf8).write(to: file)
+        await session.resumeObservation()
+        XCTAssertEqual(session.draft, "# Keep my draft")
+        XCTAssertNotNil(session.error)
+    }
+
+    func testObservationNotificationDuringLoadTriggersADeferredRecheck() async throws {
+        let file = base.appendingPathComponent("note.md")
+        try Data("# First".utf8).write(to: file)
+        let folder = try await WorkspaceIO.remember(base)
+        let first = try await WorkspaceIO.open(folder, path: "note.md")
+        try Data("# Latest".utf8).write(to: file)
+        let latest = try await WorkspaceIO.open(folder, path: "note.md")
+        let reads = ControlledRead<OpenedFile>()
+        let session = DocumentSession(folder: folder, path: "note.md", storage: base.appendingPathComponent("State"),
+            readFile: { _, _ in try await reads.read() })
+        await session.resumeObservation()
+        let initial = Task { await session.load() }
+        try await reads.waitForRequests(1)
+        await reads.finish(0, with: .success(first))
+        await initial.value
+        let reload = Task { await session.load() }
+        try await reads.waitForRequests(2)
+        await session.revalidateObservedFile()
+        await reads.finish(1, with: .success(first))
+        await reload.value
+        try await reads.waitForRequests(3)
+        await reads.finish(2, with: .success(latest))
+        let deadline = ContinuousClock.now.advanced(by: .seconds(5))
+        while session.draft != "# Latest", ContinuousClock.now < deadline {
+            try await Task.sleep(for: .milliseconds(10))
+        }
+        XCTAssertEqual(session.draft, "# Latest")
+        XCTAssertFalse(session.loading)
+    }
+
     func testOlderRefreshCannotHideNewFilesOrPublishAnOldError() async throws {
         let reads = ControlledRead<[Entry]>()
         let listing = FolderListing(read: { _, _ in try await reads.read() })

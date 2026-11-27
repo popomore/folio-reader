@@ -167,7 +167,8 @@ final class CloudReaderTests: XCTestCase {
             }
             if element.exists && element.isHittable {
                 let fixedControl = !list.frame.intersects(element.frame) && app.windows.firstMatch.frame.contains(element.frame)
-                if frame.contains(element.frame) || fixedControl { return }
+                let visible = frame.intersection(element.frame)
+                if (visible.width >= min(44, element.frame.width) && visible.height >= min(44, element.frame.height)) || fixedControl { return }
             }
             let above = element.exists ? element.frame.minY < frame.minY : searchAbove
             if above {

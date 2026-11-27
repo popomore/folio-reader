@@ -91,6 +91,7 @@ actor CloudFiles {
         }
         try FileManager.default.copyItem(at: stage, to: incoming)
         try coordinate(destination, writing: true) { url in
+            try Task.checkCancellation()
             try connection.validate()
             guard url.standardizedFileURL == destination.standardizedFileURL else { throw CloudFailure.unsafe }
             _ = try directory(item)
@@ -157,6 +158,7 @@ actor CloudFiles {
             try connection.validate()
             try FileManager.default.createDirectory(at: cache.deletingLastPathComponent(), withIntermediateDirectories: true)
             try coordinate(cache, writing: true) { actual in
+                try Task.checkCancellation()
                 let target = try CloudPaths.contained(actual, in: local)
                 guard target.path == cache.resolvingSymlinksInPath().standardizedFileURL.path else { throw CloudFailure.unsafe }
                 try CloudPaths.rejectLinks(cache, under: local)
@@ -206,9 +208,14 @@ actor CloudFiles {
                 guard let entries = FileManager.default.enumerator(at: payload,
                     includingPropertiesForKeys: [.isRegularFileKey, .isSymbolicLinkKey]) else { throw CloudFailure.unsafe }
                 var found: Set<String> = []
+                let directories = Self.expectedDirectories(current.files ?? [:])
                 for case let file as URL in entries {
-                    let values = try file.resourceValues(forKeys: [.isRegularFileKey, .isSymbolicLinkKey])
+                    let values = try file.resourceValues(forKeys: [.isRegularFileKey, .isDirectoryKey, .isSymbolicLinkKey])
                     guard values.isSymbolicLink != true else { throw CloudFailure.unsafe }
+                    if values.isDirectory == true,
+                       !directories.contains(try CloudPaths.relative(file, in: payload)) {
+                        throw CloudFailure.protectedDraft
+                    }
                     if values.isRegularFile == true, file.lastPathComponent != ".DS_Store" {
                         found.insert(try CloudPaths.relative(file, in: payload))
                     }
@@ -240,12 +247,12 @@ actor CloudFiles {
     func evict(_ item: CloudItem) throws {
         try connection.validate()
         guard item.storage == .copy, item.state == .active else { throw CloudFailure.unsafe }
-        try removePrivateDownload(item)
         let directory = try directory(item)
         if !connection.testOnly, FileManager.default.isUbiquitousItem(at: directory) {
             try connection.validate()
             try FileManager.default.evictUbiquitousItem(at: directory)
         }
+        try removePrivateDownload(item)
     }
 
     private func removePrivateDownload(_ item: CloudItem) throws {
@@ -256,8 +263,13 @@ actor CloudFiles {
         _ = try CloudPaths.contained(cache, in: downloads)
         guard !isLink(cache), !isLink(cache.deletingLastPathComponent()) else { throw CloudFailure.unsafe }
         if FileManager.default.fileExists(atPath: cache.path) {
-            try verifyLocalCleanup(item)
-            try FileManager.default.removeItem(at: cache)
+            try coordinate(cache, writing: true) { actual in
+                let target = try CloudPaths.contained(actual, in: local)
+                guard target.path == cache.resolvingSymlinksInPath().standardizedFileURL.path else { throw CloudFailure.unsafe }
+                try CloudPaths.rejectLinks(cache, under: local)
+                try verifyLocalCleanup(item)
+                try FileManager.default.removeItem(at: target)
+            }
         }
     }
 
@@ -274,9 +286,14 @@ actor CloudFiles {
         guard let entries = FileManager.default.enumerator(at: payload,
             includingPropertiesForKeys: [.isRegularFileKey, .isSymbolicLinkKey]) else { throw CloudFailure.unsafe }
         var found: Set<String> = []
+        let directories = Self.expectedDirectories(manifest.files ?? [:])
         for case let file as URL in entries {
-            let values = try file.resourceValues(forKeys: [.isRegularFileKey, .isSymbolicLinkKey])
+            let values = try file.resourceValues(forKeys: [.isRegularFileKey, .isDirectoryKey, .isSymbolicLinkKey])
             guard values.isSymbolicLink != true else { throw CloudFailure.unsafe }
+            if values.isDirectory == true,
+               !directories.contains(try CloudPaths.relative(file, in: payload)) {
+                throw CloudFailure.protectedDraft
+            }
             if values.isRegularFile == true, file.lastPathComponent != ".DS_Store" {
                 found.insert(try CloudPaths.relative(file, in: payload))
             }
@@ -297,6 +314,13 @@ actor CloudFiles {
         guard FileManager.default.fileExists(atPath: cache.path) else { return false }
         do { try verifyLocalCleanup(item); return true }
         catch { return false }
+    }
+
+    private static func expectedDirectories(_ files: [String: String]) -> Set<String> {
+        Set(files.keys.flatMap { path in
+            let parts = path.split(separator: "/")
+            return (1..<parts.count).map { parts.prefix($0).joined(separator: "/") }
+        })
     }
 
     @discardableResult

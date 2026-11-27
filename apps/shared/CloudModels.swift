@@ -61,6 +61,9 @@ struct CloudItem: Codable, Hashable, Sendable, Identifiable {
 
     var identity: CloudIdentity { CloudIdentity(id: id, generation: generation) }
     var directoryName: String { "\(id.uuidString)/\(generation.uuidString)" }
+    func tracks(_ document: String) -> Bool {
+        (try? CloudPaths.relative(document)) != nil && (folderCopy || document == path)
+    }
 }
 
 struct CloudIdentity: Codable, Hashable, Sendable {

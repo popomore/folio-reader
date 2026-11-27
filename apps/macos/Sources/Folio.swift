@@ -187,7 +187,7 @@ private struct WorkspaceSceneContent: View {
                 model.cloud.accountChanged()
                 Task { await model.cloud.refresh() }
             }
-            .onChange(of: model.cloud.retired) { _, ids in model.retireCloudTabs(ids) }
+            .onChange(of: model.cloud.retired) { old, ids in model.retireCloudTabs(ids.subtracting(old)) }
             .onChange(of: model.cloud.eviction) { _, event in
                 if let event { model.retireCloudTabs([event.item], downloadsOnly: true) }
             }

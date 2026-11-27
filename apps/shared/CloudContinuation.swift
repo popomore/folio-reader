@@ -24,9 +24,17 @@ struct CloudContinuation: Sendable {
         activity.isEligibleForHandoff = true
         activity.isEligibleForSearch = false
         activity.isEligibleForPublicIndexing = false
+        var bounded = position.sanitized
+        var encoded = (try? JSONEncoder().encode(bounded)) ?? Data()
+        for field in 0..<3 where encoded.count > 8_192 {
+            if field == 0 { bounded.heading = nil }
+            else if field == 1 { bounded.revision = nil }
+            else { bounded.path = nil }
+            encoded = (try? JSONEncoder().encode(bounded)) ?? Data()
+        }
         var info: [AnyHashable: Any] = [
             "version": 1, "document": item.id.uuidString, "generation": item.generation.uuidString,
-            "position": (try? JSONEncoder().encode(position.sanitized)) ?? Data()
+            "position": encoded
         ]
         if let folder, folder.isFileURL { info["folderURL"] = folder }
         activity.userInfo = info
@@ -53,7 +61,9 @@ enum CloudReadingScript {
       };
       window.folioResumeReading = (position, sameRevision) => {
         const all = blocks();
-        if (sameRevision && Number.isInteger(position.block) && all[position.block]) {
+        if (sameRevision && position.progress === 0 && position.block === 0 && position.blockOffset === 0) {
+          window.scrollTo(0, 0);
+        } else if (sameRevision && Number.isInteger(position.block) && all[position.block]) {
           const rect = all[position.block].getBoundingClientRect();
           window.scrollTo(0, window.scrollY + rect.top + rect.height * position.blockOffset);
         } else if (position.heading && document.getElementById(position.heading)) {
@@ -70,7 +80,9 @@ enum CloudReadingScript {
     """#
 
     static func position(_ body: Any, revision: String?) -> CloudPosition? {
-        guard let object = body as? [String: Any], JSONSerialization.isValidJSONObject(object),
+        guard var object = body as? [String: Any] else { return nil }
+        if let heading = object["heading"] as? String, heading.utf8.count > 4_096 { object["heading"] = nil }
+        guard JSONSerialization.isValidJSONObject(object),
               let data = try? JSONSerialization.data(withJSONObject: object), data.count <= 8_192,
               var position = try? JSONDecoder().decode(CloudPosition.self, from: data) else { return nil }
         position.revision = revision

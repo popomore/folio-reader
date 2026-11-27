@@ -16,6 +16,7 @@ final class DocumentSession {
     private var loadInFlight = false
     @ObservationIgnored private var documentObserver: CloudFileObservation?
     private var observationWanted = false
+    private var observationChangedDuringLoad = false
     private var original = ""
     private var lastRecoverySource = ""
     private var draftVersion = 0
@@ -51,12 +52,21 @@ final class DocumentSession {
         documentObserver = nil
         loadInFlight = true
         loading = true
-        defer { loadInFlight = false; loading = false }
+        defer {
+            loadInFlight = false
+            loading = false
+            reconcilePendingObservation()
+        }
         error = nil
         do {
-            let opened = try await readFile(folder, path)
+            var opened = try await readFile(folder, path)
             self.opened = opened
             installObservation()
+            if documentObserver != nil {
+                // Read again while registered so a write before registration cannot be missed.
+                opened = try await readFile(folder, path)
+                self.opened = opened
+            }
             revision = opened.document.revision
             original = opened.document.source ?? ""
             draft = original
@@ -110,9 +120,30 @@ final class DocumentSession {
         documentObserver = nil
     }
 
-    func resumeObservation() {
+    func resumeObservation() async {
+        let resumed = !observationWanted && opened != nil
         observationWanted = true
         installObservation()
+        if resumed { await revalidateObservedFile() }
+    }
+
+    func revalidateObservedFile() async {
+        guard observationWanted, let opened else { return }
+        guard !loadInFlight, !saving else { observationChangedDuringLoad = true; return }
+        if editing || hasChanges || recovered {
+            do {
+                let current = try await readFile(folder, path)
+                if current.document.revision != opened.document.revision {
+                    error = "This document changed elsewhere. Your unsaved draft is kept."
+                }
+            } catch { self.error = error.localizedDescription }
+        } else { await load() }
+    }
+
+    private func reconcilePendingObservation() {
+        guard observationChangedDuringLoad else { return }
+        observationChangedDuringLoad = false
+        if observationWanted { Task { await self.revalidateObservedFile() } }
     }
 
     private func installObservation() {
@@ -120,11 +151,10 @@ final class DocumentSession {
         let file = opened.access.root.appendingPathComponent(path)
         guard FileManager.default.isUbiquitousItem(at: file) else { return }
         documentObserver = CloudFileObservation(url: file) { [weak self] moved in
-            guard let self, !self.saving, !self.loading else { return }
+            guard let self else { return }
+            if self.loading || self.saving { self.observationChangedDuringLoad = true; return }
             if moved != nil { self.error = "This document moved. Open it again from its folder." }
-            else if self.editing || self.hasChanges {
-                self.error = "This document changed elsewhere. Your unsaved draft is kept."
-            } else { Task { await self.load() } }
+            else { Task { await self.revalidateObservedFile() } }
         }
     }
 
@@ -134,6 +164,7 @@ final class DocumentSession {
         guard !readOnly else { return false }
         guard let revision, !loading, !saving else { return false }
         saving = true
+        defer { saving = false; reconcilePendingObservation() }
         error = nil
         draftTask?.cancel()
         await draftTask?.value
@@ -146,14 +177,12 @@ final class DocumentSession {
         } catch {
             self.error = error.localizedDescription
             await persistDraft()
-            saving = false
             return false
         }
         do { try await drafts.remove(key, owner: draftOwner) }
         catch { self.error = "The file was saved, but its recovery copy could not be removed: \(error.localizedDescription)" }
         do { opened = try await WorkspaceIO.open(folder, path: path) }
         catch { self.error = "The file was saved, but its preview could not be reloaded: \(error.localizedDescription)" }
-        saving = false
         return true
     }
 

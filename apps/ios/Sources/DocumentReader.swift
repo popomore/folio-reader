@@ -145,7 +145,7 @@ private struct ReaderContent: View {
         .sheet(isPresented: $session.editing) { DocumentEditor(session: session) }
         .sheet(item: $export) { file in ShareSheet(file: file.url) }
         .task {
-            session.resumeObservation()
+            await session.resumeObservation()
             await session.loadIfNeeded()
             guard !Task.isCancelled else { return }
             if session.opened != nil, let item = sharedItem {

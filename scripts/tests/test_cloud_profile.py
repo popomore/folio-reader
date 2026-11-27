@@ -12,13 +12,15 @@ ROOT = Path(__file__).resolve().parents[2]
 
 
 class CloudProfileTests(unittest.TestCase):
-    def prepare(self, grant, requested=None, mode="preview"):
+    def prepare(self, grant, requested=None, mode="preview", services=None):
         template = ROOT / "apps/macos/iCloud.entitlements"
         entitlements = plistlib.loads(template.read_bytes())
         entitlements.update({
             "com.apple.application-identifier": "FIXTURETEAM.org.popomore.folio.preview",
             "com.apple.developer.icloud-container-environment": grant,
         })
+        if services is not None:
+            entitlements["com.apple.developer.icloud-services"] = services
         profile = {
             "TeamIdentifier": ["FIXTURETEAM"],
             "ApplicationIdentifierPrefix": ["FIXTURETEAM"],
@@ -53,6 +55,7 @@ class CloudProfileTests(unittest.TestCase):
     def test_array_grant_selects_the_build_environment(self):
         self.assert_environment(["Development", "Production"], "Development")
         self.assert_environment(["Development", "Production"], "Production", mode="release")
+        self.assert_environment(["Development", "Production"], "Production", mode="preview-release")
 
     def test_explicit_environment_must_be_authorized(self):
         self.assert_environment(["Development", "Production"], "Production", requested="Production")
@@ -66,6 +69,14 @@ class CloudProfileTests(unittest.TestCase):
         for grant in ([], ["Other"], ["Development", "Other"]):
             code, _, _, _ = self.prepare(grant)
             self.assertNotEqual(code, 0)
+
+    def test_wildcard_services_preserve_the_requested_entitlements(self):
+        for services in ("*", ["*"]):
+            code, error, entitlements, _ = self.prepare("Development", services=services)
+            self.assertEqual(code, 0, error)
+            self.assertEqual(set(entitlements["com.apple.developer.icloud-services"]), {"CloudKit", "CloudDocuments"})
+        code, _, _, _ = self.prepare("Development", services=["CloudDocuments"])
+        self.assertNotEqual(code, 0)
 
 
 if __name__ == "__main__":

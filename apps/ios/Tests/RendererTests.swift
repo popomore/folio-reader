@@ -185,6 +185,15 @@ final class RendererTests: XCTestCase {
         let ready = try await waitForScript("typeof window.folioReadingLocation === 'function'", in: web)
         XCTAssertTrue(ready)
         guard ready else { return }
+        _ = try await web.evaluateJavaScript("document.querySelector('article').style.marginTop='80px'; window.scrollTo(0,0)")
+        let topRaw = try await web.evaluateJavaScript("window.folioReadingLocation()")
+        let top = try XCTUnwrap(CloudReadingScript.position(topRaw as Any, revision: "original-revision"))
+        _ = try await web.evaluateJavaScript("window.scrollTo(0,800)")
+        _ = try await web.callAsyncJavaScript("window.folioResumeReading(position, sameRevision)",
+            arguments: CloudReadingScript.arguments(top, revision: "original-revision"), in: nil, contentWorld: .page)
+        let stayedAtTop = try await waitForScript("window.scrollY === 0", in: web)
+        XCTAssertTrue(stayedAtTop, "A saved top position must not jump to the first block's margin.")
+        _ = try await web.evaluateJavaScript("document.querySelector('article').style.marginTop='0px'")
         _ = try await web.evaluateJavaScript("window.scrollTo(0, 2400)")
         let raw = try await web.evaluateJavaScript("window.folioReadingLocation()")
         let body = try XCTUnwrap(raw)

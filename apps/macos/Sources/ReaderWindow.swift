@@ -338,7 +338,7 @@ struct TabDocument: View {
             } else {
                 NativePreview(file: file, kind: document.kind, bytes: document.bytes,
                               playbackChanged: { setMediaActivity(tab.id, $0) },
-                              initialPosition: tab.resumePosition, positionChanged: tab.updateReadingPosition)
+                              initialPosition: tab.readingPosition, positionChanged: tab.updateReadingPosition)
             }
         }
     }

@@ -54,7 +54,6 @@ final class ReaderTab: ObservableObject, Identifiable {
     private var draftTask: Task<Void, Never>?
     private var previewNeedsReload = false
     private var documentObserver: CloudFileObservation?
-    private var observationWanted = false
 
     init(location: FileLocation, readOnly: Bool = false, archiveDepth: Int = 0) {
         self.location = location
@@ -79,9 +78,16 @@ final class ReaderTab: ObservableObject, Identifiable {
     func load() {
         documentObserver?.stop()
         documentObserver = nil
-        observationWanted = true
         readTask?.cancel()
         let location = location
+        if FileManager.default.isUbiquitousItem(at: location.root.appendingPathComponent(location.path)) {
+            documentObserver = CloudFileObservation(url: location.root.appendingPathComponent(location.path)) { [weak self] moved in
+                guard let self else { return }
+                if moved != nil { self.error = "This document moved. Open it again from its folder." }
+                else if !editing { resumePosition = readingPosition; scrollOffset = 0; load() }
+                else if dirty { self.error = "This document changed elsewhere. Save checks for conflicts before replacing it." }
+            }
+        }
         mode = .reading
         clearDraftPreview()
         draft = ""
@@ -106,14 +112,6 @@ final class ReaderTab: ObservableObject, Identifiable {
                     var position = readingPosition
                     position.path = location.path
                     cloud?.recordPosition(item.identity, position: position)
-                }
-                if observationWanted, FileManager.default.isUbiquitousItem(at: location.root.appendingPathComponent(location.path)) {
-                    documentObserver = CloudFileObservation(url: location.root.appendingPathComponent(location.path)) { [weak self] moved in
-                        guard let self else { return }
-                        if moved != nil { self.error = "This document moved. Open it again from its folder." }
-                        else if !editing { resumePosition = readingPosition; scrollOffset = 0; load() }
-                        else if dirty { self.error = "This document changed elsewhere. Save checks for conflicts before replacing it." }
-                    }
                 }
                 if document == nil { loadError = "The reader did not return a document." }
             case .failure(let error):
@@ -173,7 +171,6 @@ final class ReaderTab: ObservableObject, Identifiable {
     }
 
     func stopObservation() {
-        observationWanted = false
         documentObserver?.stop()
         documentObserver = nil
     }
@@ -382,7 +379,7 @@ final class ReaderModel: ObservableObject {
         let tab = ReaderTab(location: location)
         if let peer = groups.values.flatMap(\.tabs).first(where: {
             $0.location.root.pathComponents == location.root.pathComponents &&
-                ($0.cloudReadOnly || $0.cloudItem?.storage == .linked || $0.cloudItem?.folderCopy == true)
+                $0.cloudItem?.tracks(location.path) == true
         }) {
             tab.cloud = peer.cloud
             tab.cloudItem = peer.cloudItem

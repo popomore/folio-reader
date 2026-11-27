@@ -128,7 +128,8 @@ final class CloudLibrary {
     func item(_ id: UUID) -> CloudItem? { cache.items.first { $0.id == id } }
     func lastRead(_ item: CloudItem) -> Date { latestReading(item)?.modified ?? item.created }
     func latestReading(_ item: CloudItem) -> CloudReading? {
-        cache.readings.filter { $0.item == item.identity }.max { $0.modified < $1.modified }
+        cache.readings.filter { $0.item == item.identity && item.tracks($0.position.path ?? item.path) }
+            .max { $0.modified < $1.modified }
     }
     func pending(_ item: CloudItem) -> CloudDeletion? { cache.deletions.first { $0.id == item.id } }
     func uploading(_ item: CloudItem) -> Bool { cache.uploads.contains { $0.id == item.id } }
@@ -264,6 +265,7 @@ final class CloudLibrary {
         mark(item: item.id)
         try persist()
         await processUploads(connection)
+        try validate(connection)
         recordPosition(item.identity, position: position)
         notice = uploading(item) ? "Waiting to publish the reading copy to iCloud." :
             "Available in Continue Reading on your other devices after iCloud finishes synchronizing."
@@ -374,7 +376,8 @@ final class CloudLibrary {
     }
 
     func recordPosition(_ item: CloudIdentity, position: CloudPosition) {
-        guard self.item(item.id)?.identity == item, self.item(item.id)?.state == .active,
+        guard let current = self.item(item.id), current.identity == item, current.state == .active,
+              current.tracks(position.sanitized.path ?? current.path),
               !cache.deletions.contains(where: { $0.id == item.id }) else { return }
         let reading = CloudReading(item: item, deviceID: deviceID, deviceName: deviceName,
                                    modified: Date(), position: position.sanitized)

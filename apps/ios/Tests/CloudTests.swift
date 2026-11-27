@@ -622,6 +622,108 @@ final class CloudTests: XCTestCase {
                        try Data(contentsOf: source.appendingPathComponent("Notes.md")))
     }
 
+    func testEmptyDirectoriesAddedOutsideFolioArePreservedInCloudAndPrivateDownloads() async throws {
+        let item = try await mac.send(root: source, path: "Notes.md", folder: true)
+        let added = cloudDirectory(item).appendingPathComponent("payload/Keep this empty folder")
+        try FileManager.default.createDirectory(at: added, withIntermediateDirectories: true)
+        await mac.delete([item])
+        XCTAssertTrue(FileManager.default.fileExists(atPath: added.path))
+        XCTAssertNotNil(mac.itemErrors[item.id])
+        try FileManager.default.removeItem(at: added)
+        await mac.retryDeletion(try XCTUnwrap(mac.item(item.id)))
+        let next = try await mac.send(root: source, path: "Notes.md", folder: true)
+        await phone.refresh()
+        let opened = try await phone.open(next)
+        let local = opened.access.root.appendingPathComponent("Keep this empty folder")
+        try FileManager.default.createDirectory(at: local, withIntermediateDirectories: true)
+        await phone.removeDownload(next)
+        XCTAssertTrue(FileManager.default.fileExists(atPath: local.path))
+        XCTAssertNotNil(phone.itemErrors[next.id])
+    }
+
+    func testLargeUnicodeHandoffHeadingKeepsTheDocumentAndReadingPositionUsable() async throws {
+        let item = try await mac.send(root: source, path: "Notes.md", folder: false)
+        let activity = NSUserActivity(activityType: CloudEnvironment.activityType)
+        CloudContinuation.configure(activity, item: item,
+            position: CloudPosition(path: "Notes.md", heading: String(repeating: "👨‍👩‍👧‍👦", count: 1_024), progress: 0.6, page: 7), folder: nil)
+        let value = try XCTUnwrap(CloudContinuation.read(activity))
+        XCTAssertEqual(value.identity, item.identity)
+        XCTAssertEqual(value.position.path, "Notes.md")
+        XCTAssertEqual(value.position.progress, 0.6)
+        XCTAssertEqual(value.position.page, 7)
+        let tracked = try XCTUnwrap(CloudReadingScript.position(["heading": String(repeating: "👨‍👩‍👧‍👦", count: 1_024), "progress": 0.6, "blockOffset": 0], revision: "source"))
+        XCTAssertEqual(tracked.progress, 0.6)
+    }
+
+    func testFailedMetadataWriteCanBeRetriedAndSurvivesRestart() async throws {
+        let parent = base.appendingPathComponent("Blocked metadata")
+        let file = parent.appendingPathComponent("metadata.json")
+        let metadata = try LocalCloudMetadata(file: file)
+        let item = try await mac.send(root: source, path: "Notes.md", folder: false)
+        try Data("Block directory creation".utf8).write(to: parent)
+        await fails { try await metadata.create(item) }
+        let failed = try await metadata.snapshot()
+        XCTAssertTrue(failed.items.isEmpty)
+        try FileManager.default.removeItem(at: parent)
+        try await metadata.create(item)
+        let restarted = try LocalCloudMetadata(file: file)
+        let saved = try await restarted.snapshot()
+        XCTAssertEqual(saved.items, [item])
+    }
+
+    func testAccountChangeDuringPublicationRejectsTheReturnedAssociation() async throws {
+        let gate = PausedPublicationMetadata(base: remote)
+        let old = CloudConnection(account: "first-account", root: connection.root, metadata: gate, isCurrent: { true }, testOnly: true)
+        let resolver = CloudConnectionSource(old)
+        let library = CloudLibrary(storage: base.appendingPathComponent("Publishing"), deviceName: "Fixture") { await resolver.current() }
+        await library.refresh()
+        let sending = Task { try await library.send(root: self.source, path: "Notes.md", folder: false) }
+        try await gate.waitUntilPaused()
+        library.accountChanged()
+        let otherRoot = base.appendingPathComponent("Publishing second account")
+        let next = CloudConnection(account: "second-account", root: otherRoot,
+            metadata: try LocalCloudMetadata(file: otherRoot.appendingPathComponent("metadata.json")), isCurrent: { true }, testOnly: true)
+        await resolver.replace(next)
+        await library.refresh()
+        await gate.release()
+        await fails { _ = try await sending.value }
+        XCTAssertTrue(library.items.isEmpty)
+        XCTAssertNil(library.notice)
+    }
+
+    func testLinkedDocumentDoesNotInheritAnotherDocumentsReadingPosition() async throws {
+        let files = CloudFiles(connection: connection, local: base.appendingPathComponent("Link tracking"))
+        let item = try await files.link(root: source, path: "Notes.md", device: "Mac")
+        try await remote.create(item)
+        await phone.refresh()
+        phone.recordPosition(item.identity, position: CloudPosition(path: "Images/image.png", page: 4))
+        XCTAssertNil(phone.latestReading(item))
+        try await remote.record(CloudReading(item: item.identity, deviceID: UUID(), deviceName: "Old Mac", modified: Date(),
+            position: CloudPosition(path: "Images/image.png", page: 9)))
+        await phone.refresh()
+        XCTAssertNil(phone.latestReading(item))
+        XCTAssertTrue(item.tracks("Notes.md"))
+        XCTAssertFalse(item.tracks("Images/image.png"))
+    }
+
+    func testFixtureResumesAPartialSeedWithoutReplacingExistingCopies() async throws {
+        let storage = base.appendingPathComponent("Partial fixture")
+        let first = try CloudFixture.library(storage: storage, device: "Fixture")
+        await first.refresh()
+        let ids = Set(first.items.map(\.id))
+        XCTAssertEqual(ids.count, 2)
+        let metadata = storage.appendingPathComponent("FixtureCloud/metadata.json")
+        var json = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(contentsOf: metadata)) as? [String: Any])
+        let items = try XCTUnwrap(json["items"] as? [[String: Any]])
+        json["items"] = [items[0]]
+        json["readings"] = []
+        try JSONSerialization.data(withJSONObject: json).write(to: metadata)
+        let restarted = try CloudFixture.library(storage: storage, device: "Fixture")
+        await restarted.refresh()
+        XCTAssertEqual(Set(restarted.items.map(\.id)), ids)
+        XCTAssertNotNil(restarted.items.first.flatMap { restarted.latestReading($0) })
+    }
+
     private func cloudDirectory(_ item: CloudItem) -> URL {
         connection.copies.appendingPathComponent(item.directoryName)
     }
@@ -636,6 +738,28 @@ private actor CloudConnectionSource {
     init(_ value: CloudConnection) { self.value = value }
     func current() -> CloudConnection { value }
     func replace(_ value: CloudConnection) { self.value = value }
+}
+
+private actor PausedPublicationMetadata: CloudMetadata {
+    let base: LocalCloudMetadata
+    private var continuation: CheckedContinuation<Void, Never>?
+    init(base: LocalCloudMetadata) { self.base = base }
+    func snapshot() async throws -> CloudSnapshot { try await base.snapshot() }
+    func create(_ item: CloudItem) async throws {
+        try await base.create(item)
+        await withCheckedContinuation { continuation = $0 }
+    }
+    func waitUntilPaused() async throws {
+        let deadline = Date().addingTimeInterval(5)
+        while continuation == nil {
+            if Date() > deadline { throw CloudFailure.message("The controlled publication did not start.") }
+            try await Task.sleep(for: .milliseconds(1))
+        }
+    }
+    func release() { continuation?.resume(); continuation = nil }
+    func record(_ reading: CloudReading) async throws { try await base.record(reading) }
+    func beginDeletion(_ request: CloudDeletion) async throws -> CloudItem { try await base.beginDeletion(request) }
+    func finishDeletion(_ request: CloudDeletion) async throws { try await base.finishDeletion(request) }
 }
 
 private actor PausedCloudMetadata: CloudMetadata {

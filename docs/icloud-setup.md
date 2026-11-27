@@ -25,10 +25,12 @@ Choose a profile that grants the corresponding environment. For a production
 device check from Debug, explicitly set `FOLIO_ICLOUD_ENVIRONMENT=Production`.
 Do not infer the Mac environment from its build name: the signed profile decides
 it, and the build script writes the matching Info.plist value. If a profile grants
-multiple environments, preview builds select Development and release builds select
-Production. Set `FOLIO_ICLOUD_ENVIRONMENT` to select another authorized environment;
+multiple environments, `preview` selects Development, while `release` and
+`preview-release` select Production. Set `FOLIO_ICLOUD_ENVIRONMENT` to select another authorized environment;
 an explicit value outside the profile's grant is rejected. Scalar grants and
 single-value arrays select their sole environment.
+Wildcard iCloud service grants are accepted while the signed app still requests
+the concrete CloudKit and CloudDocuments services and its specific containers.
 
 ## macOS
 

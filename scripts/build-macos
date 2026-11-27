@@ -156,7 +156,12 @@ if not team or not identity.endswith("(" + team + ")"):
 if not fnmatch.fnmatchcase(identifier, granted.get("com.apple.application-identifier", "")):
     sys.exit("The iCloud profile does not authorize this macOS bundle identity.")
 for key, values in requested.items():
-    if not set(values).issubset(granted.get(key, [])):
+    allowed = granted.get(key, [])
+    allowed = [allowed] if isinstance(allowed, str) else allowed
+    if not isinstance(allowed, list) or not all(
+        value in allowed or (key == "com.apple.developer.icloud-services" and "*" in allowed)
+        for value in values
+    ):
         sys.exit("The profile does not grant the requested iCloud container and services.")
 requested["com.apple.application-identifier"] = identifier
 requested["com.apple.developer.team-identifier"] = team

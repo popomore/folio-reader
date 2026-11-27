@@ -200,32 +200,35 @@ actor LocalCloudMetadata: CloudMetadata {
             guard previous == item, previous.state == .active else { throw CloudFailure.stale }
             return
         }
-        state.items.append(item)
-        try persist()
+        var next = state
+        next.items.append(item)
+        try commit(next)
     }
 
     func record(_ reading: CloudReading) throws {
         guard !offline else { throw CloudFailure.offline }
         guard state.items.contains(where: { $0.identity == reading.item && $0.state == .active }) else { throw CloudFailure.stale }
         if let previous = state.readings.first(where: { $0.id == reading.id }), previous.modified > reading.modified { return }
-        state.readings.removeAll { $0.id == reading.id }
-        state.readings.append(reading)
-        try persist()
+        var next = state
+        next.readings.removeAll { $0.id == reading.id }
+        next.readings.append(reading)
+        try commit(next)
     }
 
     func beginDeletion(_ request: CloudDeletion) throws -> CloudItem {
         guard !offline else { throw CloudFailure.offline }
         guard !failedDeletions.contains(request.id) else { throw CloudFailure.message("This copy could not be deleted. Try again.") }
-        if !state.items.contains(where: { $0.id == request.id }) {
+        var next = state
+        if !next.items.contains(where: { $0.id == request.id }) {
             guard let candidate = request.unpublishedCopy else { throw CloudFailure.stale }
-            state.items.append(candidate)
+            next.items.append(candidate)
         }
-        guard let index = state.items.firstIndex(where: { $0.id == request.id }),
-              state.items[index].identity == request.item, state.items[index].storage == .copy,
-              state.items[index].revision == request.revision else { throw CloudFailure.stale }
-        if state.items[index].state == .active { state.items[index].state = .deleting }
-        try persist()
-        return state.items[index]
+        guard let index = next.items.firstIndex(where: { $0.id == request.id }),
+              next.items[index].identity == request.item, next.items[index].storage == .copy,
+              next.items[index].revision == request.revision else { throw CloudFailure.stale }
+        if next.items[index].state == .active { next.items[index].state = .deleting }
+        try commit(next)
+        return next.items[index]
     }
 
     func finishDeletion(_ request: CloudDeletion) throws {
@@ -233,12 +236,14 @@ actor LocalCloudMetadata: CloudMetadata {
         guard let index = state.items.firstIndex(where: { $0.identity == request.item }),
               state.items[index].state != .active, state.items[index].storage == .copy,
               state.items[index].revision == request.revision else { throw CloudFailure.stale }
-        state.items[index].state = .deleted
-        try persist()
+        var next = state
+        next.items[index].state = .deleted
+        try commit(next)
     }
 
-    private func persist() throws {
+    private func commit(_ next: State) throws {
         try FileManager.default.createDirectory(at: file.deletingLastPathComponent(), withIntermediateDirectories: true)
-        try JSONEncoder().encode(state).write(to: file, options: .atomic)
+        try JSONEncoder().encode(next).write(to: file, options: .atomic)
+        state = next
     }
 }

@@ -125,8 +125,8 @@ struct LibraryView: View {
             cloud.accountChanged()
             Task { await cloud.refresh() }
         }
-        .onChange(of: cloud.retired) { _, retired in
-            navigation.retireCloudItems(retired, protecting: cloud.protectedCopies)
+        .onChange(of: cloud.retired) { previous, retired in
+            navigation.retireCloudItems(retired.subtracting(previous), protecting: cloud.protectedCopies)
         }
         .onChange(of: cloud.account) { old, new in
             if old != nil, old != new {
@@ -185,7 +185,7 @@ struct LibraryView: View {
     private func document(_ selection: FileSelection) -> some View {
         DocumentReader(selection: selection, follow: { path, fragment in
             let shared = selection.sharedItem
-            let tracked = shared.flatMap { $0.folderCopy || $0.storage == .linked ? $0 : nil }
+            let tracked = shared.flatMap { $0.tracks(path) ? $0 : nil }
             open(selection.folder, path, fragment: fragment, cloudItem: tracked, readOnly: selection.readOnly)
         }).id(selection.id)
     }

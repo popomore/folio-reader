@@ -38,4 +38,14 @@ final class CloudObservationTests: XCTestCase {
         NotificationCenter.default.post(name: UIApplication.willEnterForegroundNotification, object: nil)
         XCTAssertFalse(registered(observer))
     }
+
+    func testForegroundRevalidatesChangesMissedWhileUnregistered() async throws {
+        var changes = 0
+        let observer = CloudFileObservation(url: URL(fileURLWithPath: NSTemporaryDirectory()).appendingPathComponent(UUID().uuidString)) { _ in changes += 1 }
+        defer { observer.stop() }
+        NotificationCenter.default.post(name: UIApplication.didEnterBackgroundNotification, object: nil)
+        NotificationCenter.default.post(name: UIApplication.willEnterForegroundNotification, object: nil)
+        try await Task.sleep(for: .milliseconds(10))
+        XCTAssertEqual(changes, 1)
+    }
 }
