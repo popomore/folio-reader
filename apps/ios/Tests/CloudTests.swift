@@ -482,6 +482,7 @@ final class CloudTests: XCTestCase {
     func testRemoteDeletionKeepsChangedDownloadsVisibleForReview() async throws {
         let item = try await mac.send(root: source, path: "Notes.md", folder: false)
         await phone.refresh()
+        XCTAssertFalse(phone.canReviewLocalFiles(item))
         let opened = try await phone.open(item)
         let file = opened.access.root.appendingPathComponent("Notes.md")
         let changed = Data("Keep changes from another app.".utf8)
@@ -491,6 +492,7 @@ final class CloudTests: XCTestCase {
         XCTAssertEqual(try Data(contentsOf: file), changed)
         XCTAssertNotNil(phone.itemErrors[item.id])
         XCTAssertEqual(phone.copies.map(\.id), [item.id])
+        XCTAssertTrue(phone.canReviewLocalFiles(try XCTUnwrap(phone.item(item.id))))
         let review = try await phone.openLocalReview(item)
         XCTAssertEqual(try Data(contentsOf: review.access.root.appendingPathComponent("Notes.md")), changed)
     }

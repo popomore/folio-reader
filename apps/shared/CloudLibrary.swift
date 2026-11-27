@@ -134,6 +134,9 @@ final class CloudLibrary {
     func uploading(_ item: CloudItem) -> Bool { cache.uploads.contains { $0.id == item.id } }
     func busy(_ item: CloudItem) -> Bool { busyItems.contains(item.id) }
     func protected(_ item: CloudItem) -> Bool { cache.protected.contains(item.id) }
+    func canReviewLocalFiles(_ item: CloudItem) -> Bool {
+        item.storage == .copy && (protected(item) || pending(item) != nil || item.state != .active || itemErrors[item.id] != nil)
+    }
     func canDelete(_ item: CloudItem) -> Bool {
         available && item.storage == .copy && item.state == .active &&
             !busy(item) && !protected(item) && pending(item) == nil

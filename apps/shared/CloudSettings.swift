@@ -225,7 +225,7 @@ struct CloudCopyManager: View {
 
     private func actions(_ item: CloudItem) -> some View {
         Menu {
-            if cloud.protected(item) || item.state == .deleted {
+            if cloud.canReviewLocalFiles(item) {
                 Button("Review Local Files") { cloud.requestLocalReview(item) }
             }
             if cloud.pending(item) != nil || item.state == .deleting {
