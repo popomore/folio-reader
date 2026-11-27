@@ -48,6 +48,5 @@ wrap. These are implementation defaults for the native application.
 README.md, apps/macos/Sources/WorkspaceStyle.swift,
 apps/macos/Resources/reader.css, and apps/macos/Themes define the existing product
 and visual context. The iOS request extends that product to another platform.
-The optional scope and style questions are pending; this document records the
-existing product and current implementation defaults, not a confirmed new brand
-brief.
+The iOS application extends that product and keeps the established native reading
+workflow.

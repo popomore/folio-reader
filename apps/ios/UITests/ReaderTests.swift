@@ -12,7 +12,7 @@ final class ReaderTests: XCTestCase {
 
     func testBrowseMarkdownOutlineAndRelativeLink() {
         sample()
-        file("Welcome.md").tap()
+        tapFile("Welcome.md")
         let heading = app.webViews.staticTexts["A place for your project files"]
         XCTAssertTrue(heading.waitForExistence(timeout: 20))
         screenshot("Markdown reader")
@@ -22,7 +22,7 @@ final class ReaderTests: XCTestCase {
         XCTAssertTrue(app.webViews.staticTexts["Your next thought"].waitForExistence(timeout: 5))
         screenshot("Document outline navigation")
         relaunchSample()
-        file("Welcome.md").tap()
+        tapFile("Welcome.md")
         let link = app.webViews.links["Field Notes"]
         XCTAssertTrue(link.waitForExistence(timeout: 20))
         link.tap()
@@ -68,17 +68,17 @@ final class ReaderTests: XCTestCase {
 
     func testTablePDFAndImagePreviews() {
         sample()
-        file("Data").tap()
-        file("Data/reading-list.csv").tap()
+        tapFile("Data")
+        tapFile("Data/reading-list.csv")
         XCTAssertTrue(app.webViews.staticTexts["In progress"].waitForExistence(timeout: 15))
         screenshot("CSV table")
         relaunchSample()
-        file("Reference.pdf").tap()
+        tapFile("Reference.pdf")
         XCTAssertTrue(app.descendants(matching: .any)["pdf-preview"].waitForExistence(timeout: 15))
         screenshot("PDF reader")
         relaunchSample()
-        file("Images").tap()
-        file("Images/folio.png").tap()
+        tapFile("Images")
+        tapFile("Images/folio.png")
         XCTAssertTrue(app.images["folio.png"].waitForExistence(timeout: 15))
         screenshot("Image reader")
     }
@@ -111,17 +111,16 @@ final class ReaderTests: XCTestCase {
         app.switches["Serif Font"].tap()
         screenshot("Dark reading settings")
         app.buttons["Done"].tap()
-        app.buttons["Explore Sample Folder"].tap()
-        file("Welcome.md").tap()
+        tap(app.buttons["Explore Sample Folder"])
+        tapFile("Welcome.md")
         XCTAssertTrue(app.webViews.staticTexts["A place for your project files"].waitForExistence(timeout: 20))
         screenshot("Dark reader")
     }
 
     private func sample() {
         app.launch()
-        XCTAssertTrue(app.buttons["Explore Sample Folder"].waitForExistence(timeout: 10))
-        app.buttons["Explore Sample Folder"].tap()
-        XCTAssertTrue(file("Welcome.md").waitForExistence(timeout: 10))
+        tap(app.buttons["Explore Sample Folder"])
+        XCTAssertTrue(app.navigationBars["Sample Project"].waitForExistence(timeout: 10))
     }
 
     private func relaunchSample() { app.terminate(); sample() }
@@ -130,9 +129,24 @@ final class ReaderTests: XCTestCase {
         app.descendants(matching: .any).matching(identifier: "file:\(path)").firstMatch
     }
 
+    private func tap(_ element: XCUIElement) {
+        for _ in 0..<8 {
+            let list = app.collectionViews.firstMatch
+            let viewport = list.exists ? list.frame.intersection(app.frame) : app.frame
+            // A partially visible row can be hittable while its tap point is offscreen.
+            if element.exists && element.isHittable && viewport.contains(element.frame) { break }
+            if element.exists && element.frame.minY < viewport.minY { app.swipeDown() }
+            else { app.swipeUp() }
+        }
+        XCTAssertTrue(element.waitForExistence(timeout: 5))
+        element.tap()
+    }
+
+    private func tapFile(_ path: String) { tap(file(path)) }
+
     private func notes() {
-        file("Notes").tap()
-        file("Notes/Field Notes.md").tap()
+        tapFile("Notes")
+        tapFile("Notes/Field Notes.md")
     }
 
     private func preview(containing text: String) -> XCUIElement {
