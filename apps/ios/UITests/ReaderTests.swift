@@ -102,9 +102,19 @@ final class ReaderTests: XCTestCase {
         app.launch()
         app.buttons["Add"].tap()
         app.buttons["Add Folder"].tap()
-        XCTAssertTrue(app.buttons["Cancel"].waitForExistence(timeout: 10))
+        let picker = app.otherElements["Browse View (Picker)"]
+        XCTAssertTrue(picker.waitForExistence(timeout: 20))
         screenshot("System folder picker")
-        app.buttons["Cancel"].tap()
+        if UIDevice.current.userInterfaceIdiom == .phone {
+            let handle = picker.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.01))
+            let bottom = picker.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.9))
+            handle.press(forDuration: 0.1, thenDragTo: bottom)
+        } else {
+            XCTAssertTrue(app.buttons["Cancel"].waitForExistence(timeout: 10))
+            app.buttons["Cancel"].tap()
+        }
+        let dismissed = expectation(for: NSPredicate(format: "exists == false"), evaluatedWith: picker)
+        wait(for: [dismissed], timeout: 10)
         XCTAssertTrue(app.buttons["Explore Sample Folder"].waitForExistence(timeout: 5))
     }
 
