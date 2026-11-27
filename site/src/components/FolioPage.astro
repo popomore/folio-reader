@@ -1,0 +1,52 @@
+---
+import { messages as siteMessages } from '../locales/index.ts';
+import ProductSite from '../site-kit/ProductSite.astro';
+import { productActions } from '../site-kit/actions';
+import type { Locale, Product } from '../site-kit/types';
+import { product as config } from '../product';
+import '../styles/folio.css';
+
+interface Props { locale: Locale }
+const { locale } = Astro.props;
+const product: Product = config;
+const copy = product.copy[locale];
+const a = productActions(product, locale);
+const zh = locale === 'zh';
+const messages = siteMessages[locale];
+const words = messages.page;
+const chapters = [['preview', words.preview], ['formats', words.formats], ['workspace', words.workspace], ['download', words.get]];
+---
+<ProductSite {product} {locale}>
+  <header class="fo-header fo-container">
+    <a class="fo-brand" href={a.home} aria-label={`Folio ${messages.accessibility.home}`}><img src="/icon.png" alt="" width="40" height="40" /><span>Folio</span></a>
+    <p>{words.context}</p>
+    <a class="fo-language" href={zh ? '/' : '/zh/'} lang={zh ? 'en' : 'zh-CN'} aria-label={messages.accessibility.languageLabel}>{messages.accessibility.languageName}</a>
+  </header>
+  <div class="fo-layout fo-container">
+    <aside class="fo-rail"><nav aria-label={words.contents}><p class="eyebrow">{words.contents}</p><ol>{chapters.map(([id, label], index) => <li><a href={`#${id}`}><span aria-hidden="true">{String(index + 1).padStart(2, '0')}</span>{label}</a></li>)}</ol><a class="fo-guide" href={product.guide}>{a.guide} ↗</a></nav></aside>
+    <main id="main" tabindex="-1" class="fo-paper">
+      <section class="fo-preview" id="preview" aria-labelledby="hero-title">
+        <p class="fo-chapter"><span aria-hidden="true">01</span>{copy.eyebrow}</p>
+        <h1 id="hero-title">{copy.headline.map((line) => <span>{line}</span>)}</h1>
+        <p class="fo-intro">{copy.intro}</p>
+        <div class="actions"><a class="button" href={a.primaryHref}>{a.primaryLabel}<span aria-hidden="true">↗</span></a><a class="text-link" href={a.secondaryHref}>{a.secondaryLabel} ↗</a></div>
+        <p class="requirements">{a.requirements}</p>
+        {!product.release && <p class="availability-note">{a.unavailable}</p>}
+        <figure class="fo-preview-window"><a class="screenshot-link" href={product.hero.src} aria-label={`${a.image}: Folio`}><img class="app-screenshot" src={product.hero.src} alt={copy.imageAlt} width={product.hero.width} height={product.hero.height} fetchpriority="high" /></a><figcaption>{copy.imageCaption} <a href={product.hero.src}>{a.image} ↗</a></figcaption></figure>
+        <div class="fo-handoff"><h2>{words.flowTitle}</h2><ol>{words.flow.map((step) => <li><h3>{step.title}</h3><p>{step.body}</p></li>)}</ol><div class="fo-command"><p>{words.command}</p><pre><code>folio preview ./output/result.md</code></pre><a class="text-link" href={product.guide}>{words.commandGuide} ↗</a></div></div>
+      </section>
+
+      <section class="fo-formats" id="formats" aria-labelledby="formats-title"><p class="fo-chapter"><span aria-hidden="true">02</span>{words.formats}</p><h2 id="formats-title">{words.formatsTitle}</h2><table><thead><tr><th scope="col">{words.formatLabel}</th><th scope="col">{words.formatExample}</th></tr></thead><tbody>{words.formatsList.map(([label, examples]) => <tr><th scope="row">{label}</th><td>{examples}</td></tr>)}</tbody></table><p class="fo-note">{copy.detail.note}</p></section>
+
+      <section class="fo-workspace" id="workspace" aria-labelledby="workspace-title"><p class="fo-chapter"><span aria-hidden="true">03</span>{words.workspace}</p><h2 id="workspace-title">{words.workspaceTitle}</h2><p class="fo-section-intro">{words.workspaceBody}</p>
+        {product.storyImage && <figure><a class="screenshot-link" href={product.storyImage.src} aria-label={`${a.image}: ${words.workspace}`}><img class="app-screenshot" src={product.storyImage.src} alt={copy.story.imageAlt} width={product.storyImage.width} height={product.storyImage.height} loading="lazy" decoding="async" /></a><figcaption>{words.workspaceNote}</figcaption></figure>}
+        <div class="fo-workspace-notes">{copy.features.slice(0, 2).map((feature) => <div><h3>{feature.title}</h3><p>{feature.description}</p></div>)}</div>
+      </section>
+
+      <section class="fo-get" id="download" aria-labelledby="download-title"><p class="fo-chapter"><span aria-hidden="true">04</span>{words.get}</p><h2 id="download-title">{words.sourceTitle}</h2><p class="fo-section-intro">{words.sourceBody}</p><div class="actions"><a class="button" href={a.primaryHref}>{a.primaryLabel} ↗</a><a class="text-link" href={a.secondaryHref}>{a.secondaryLabel} ↗</a></div><p class="requirements">{a.requirements}</p><p class="availability-note">{a.availability}</p>{product.release && <p class="fo-note fo-release"><a href={product.release.url}>{product.release.tag}</a><a href={`${product.repository}/releases`}>{a.releases} ↗</a></p>}
+        <div class="fo-questions"><h3>{words.questions}</h3>{copy.faq.map((item) => <details><summary>{item.question}<span class="faq-indicator" aria-hidden="true">+</span></summary><p>{item.answer}</p></details>)}</div>
+      </section>
+    </main>
+  </div>
+  <footer class="fo-footer fo-container"><p>Folio · {words.footer}</p><nav aria-label={messages.accessibility.footerLinks}><a href={`${product.repository}/blob/main/LICENSE`}>{a.license}</a><a href="https://chuo.me">chuo.me ↗</a><a href="#top">{a.back} ↑</a></nav></footer>
+</ProductSite>

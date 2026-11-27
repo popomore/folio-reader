@@ -136,3 +136,7 @@ Open an [issue](https://github.com/popomore/folio-reader/issues) for a bug or fe
 ## License
 
 Folio is released under the [MIT License](LICENSE). Third-party dependencies and bundled assets retain their respective licenses.
+
+## Product website
+
+The bilingual public website is maintained in [site/](site/README.md), including its build, checks and Cloudflare release workflow.
