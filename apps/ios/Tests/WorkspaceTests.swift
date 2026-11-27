@@ -206,6 +206,30 @@ final class WorkspaceTests: XCTestCase {
         XCTAssertEqual(restored.draft, "# Saved draft")
     }
 
+    func testUnchangedRecoveryCannotReplaceOrResurrectAnotherSessionsDraft() async throws {
+        try Data("# Original".utf8).write(to: base.appendingPathComponent("note.md"))
+        let folder = try await WorkspaceIO.remember(base)
+        let storage = base.appendingPathComponent("State")
+        let older = DocumentSession(folder: folder, path: "note.md", storage: storage)
+        await older.load()
+        older.draft = "# First draft"
+        await older.persistDraft()
+        let newer = DocumentSession(folder: folder, path: "note.md", storage: storage)
+        await newer.load()
+        newer.draft = "# Newest draft"
+        await newer.persistDraft()
+        await older.persistDraft()
+        let recovered = DocumentSession(folder: folder, path: "note.md", storage: storage)
+        await recovered.load()
+        XCTAssertEqual(recovered.draft, "# Newest draft")
+        await recovered.discard()
+        await older.persistDraft()
+        let reopened = DocumentSession(folder: folder, path: "note.md", storage: storage)
+        await reopened.load()
+        XCTAssertFalse(reopened.recovered)
+        XCTAssertEqual(reopened.draft, "# Original")
+    }
+
     func testLegacyRecoveryRecordCanBeRecoveredAndClearedAfterUndo() async throws {
         try Data("# Original".utf8).write(to: base.appendingPathComponent("note.md"))
         let folder = try await WorkspaceIO.remember(base)

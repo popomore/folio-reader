@@ -127,7 +127,10 @@ actor DraftStore {
         return try JSONDecoder().decode(DraftRecord.self, from: Data(contentsOf: url))
     }
 
-    func write(_ record: DraftRecord, key: String) throws {
+    func write(_ record: DraftRecord, key: String, onlyIfOwnedBy owner: UUID? = nil) throws {
+        if let owner {
+            guard let current = try read(key), current.owner == owner else { return }
+        }
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         try JSONEncoder().encode(record).write(to: location(key), options: [.atomic, .completeFileProtectionUnlessOpen])
     }

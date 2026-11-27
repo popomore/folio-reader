@@ -11,12 +11,16 @@ final class DocumentSession {
     private var draftTask: Task<Void, Never>?
     private var loadInFlight = false
     private var original = ""
+    private var lastRecoverySource = ""
+    private var draftVersion = 0
     private(set) var revision: String?
     private(set) var opened: OpenedFile?
     private(set) var loading = true
     private(set) var saving = false
     var error: String?
-    var draft = ""
+    var draft = "" {
+        didSet { if draft != oldValue { draftVersion &+= 1 } }
+    }
     var recovered = false
     var editing = false
     var hasChanges: Bool { draft != original }
@@ -46,12 +50,14 @@ final class DocumentSession {
             revision = opened.document.revision
             original = opened.document.source ?? ""
             draft = original
+            lastRecoverySource = original
             recovered = false
             if opened.document.revision != nil, let saved = try await drafts.recover(key, owner: draftOwner) {
                 if saved.source == original {
                     try await drafts.remove(key, owner: draftOwner)
                 } else {
                     draft = saved.source
+                    lastRecoverySource = saved.source
                     revision = saved.revision
                     recovered = true
                 }
@@ -77,10 +83,14 @@ final class DocumentSession {
 
     func persistDraft() async {
         guard let revision, !loading else { return }
+        let record = DraftRecord(source: draft, revision: revision, owner: draftOwner)
+        let version = draftVersion
         do {
             if hasChanges {
-                try await drafts.write(DraftRecord(source: draft, revision: revision, owner: draftOwner), key: key)
+                let owner = record.source == lastRecoverySource ? draftOwner : nil
+                try await drafts.write(record, key: key, onlyIfOwnedBy: owner)
             } else { try await drafts.remove(key, owner: draftOwner) }
+            if version == draftVersion { lastRecoverySource = record.source }
         } catch { self.error = "Your recovery draft could not be updated: \(error.localizedDescription)" }
     }
 
@@ -94,6 +104,7 @@ final class DocumentSession {
         do {
             self.revision = try await WorkspaceIO.save(folder, path: path, revision: revision, source: source)
             original = source
+            lastRecoverySource = source
             recovered = false
         } catch {
             self.error = error.localizedDescription
