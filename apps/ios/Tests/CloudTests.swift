@@ -422,17 +422,51 @@ final class CloudTests: XCTestCase {
         XCTAssertEqual(snapshot.items.first?.state, .active)
     }
 
-    func testUncommittedFailedDeletionCanBeCancelledAfterCheckingTheServer() async throws {
+    func testFailedActiveCopyDeletionCanBeRetriedExplicitly() async throws {
+        let item = try await mac.send(root: source, path: "Notes.md", folder: false)
+        await remote.failDeletion(item.id)
+        await mac.delete([item])
+        XCTAssertEqual(mac.item(item.id)?.state, .active)
+        XCTAssertEqual(mac.pendingCount, 1)
+        await remote.clearFailures()
+        await mac.retryDeletion(item)
+        XCTAssertTrue(mac.copies.isEmpty)
+        XCTAssertEqual(mac.pendingCount, 0)
+        let snapshot = try await remote.snapshot()
+        XCTAssertEqual(snapshot.items.first?.state, .deleted)
+    }
+
+    func testSentDeletionCannotBeReportedAsCancelled() async throws {
         let item = try await mac.send(root: source, path: "Notes.md", folder: false)
         await remote.failDeletion(item.id)
         await mac.delete([item])
         XCTAssertEqual(mac.pending(item)?.phase, .requesting)
         await mac.cancelDeletion(item)
-        XCTAssertEqual(mac.pendingCount, 0)
-        await remote.clearFailures()
-        await mac.refresh()
-        XCTAssertEqual(mac.continuing.map(\.id), [item.id])
+        XCTAssertEqual(mac.pendingCount, 1)
+        XCTAssertEqual(mac.pending(item)?.phase, .requesting)
+        XCTAssertNotNil(mac.itemErrors[item.id])
         XCTAssertTrue(FileManager.default.fileExists(atPath: cloudDirectory(item).path))
+    }
+
+    func testCancelledQueuedCopyIsSkippedWhileAnotherBatchDeletionIsInFlight() async throws {
+        let first = try await mac.send(root: source, path: "Notes.md", folder: false)
+        let second = try await mac.send(root: source, path: "Notes.md", folder: false)
+        let gate = PausedDeletionMetadata(base: remote, item: first.id)
+        let connection = CloudConnection(account: connection.account, root: connection.root,
+            metadata: gate, isCurrent: { true }, testOnly: true)
+        let batch = CloudLibrary(storage: base.appendingPathComponent("Batch"), deviceName: "Fixture Batch") { connection }
+        await batch.refresh()
+        let work = Task { await batch.delete([first, second]) }
+        try await gate.waitUntilPaused()
+        XCTAssertEqual(batch.pending(second)?.phase, .queued)
+        await batch.cancelDeletion(second)
+        XCTAssertNil(batch.pending(second))
+        await gate.release()
+        await work.value
+        XCTAssertEqual(batch.copies.map(\.id), [second.id])
+        XCTAssertTrue(FileManager.default.fileExists(atPath: cloudDirectory(second).path))
+        let snapshot = try await remote.snapshot()
+        XCTAssertEqual(snapshot.items.first { $0.id == second.id }?.state, .active)
     }
 
     private func cloudDirectory(_ item: CloudItem) -> URL {
@@ -471,4 +505,27 @@ private actor PausedCloudMetadata: CloudMetadata {
     func record(_ reading: CloudReading) async throws { try await base.record(reading) }
     func beginDeletion(_ request: CloudDeletion) async throws -> CloudItem { try await base.beginDeletion(request) }
     func finishDeletion(_ request: CloudDeletion) async throws { try await base.finishDeletion(request) }
+}
+
+private actor PausedDeletionMetadata: CloudMetadata {
+    let base: LocalCloudMetadata
+    let item: UUID
+    private var continuation: CheckedContinuation<Void, Never>?
+    init(base: LocalCloudMetadata, item: UUID) { self.base = base; self.item = item }
+    func snapshot() async throws -> CloudSnapshot { try await base.snapshot() }
+    func create(_ item: CloudItem) async throws { try await base.create(item) }
+    func record(_ reading: CloudReading) async throws { try await base.record(reading) }
+    func beginDeletion(_ request: CloudDeletion) async throws -> CloudItem {
+        if request.id == item { await withCheckedContinuation { continuation = $0 } }
+        return try await base.beginDeletion(request)
+    }
+    func finishDeletion(_ request: CloudDeletion) async throws { try await base.finishDeletion(request) }
+    func waitUntilPaused() async throws {
+        let deadline = Date().addingTimeInterval(5)
+        while continuation == nil {
+            if Date() > deadline { throw CloudFailure.message("The controlled deletion did not start.") }
+            try await Task.sleep(for: .milliseconds(1))
+        }
+    }
+    func release() { continuation?.resume(); continuation = nil }
 }

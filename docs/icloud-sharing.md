@@ -80,8 +80,10 @@ before cloud deletion starts. Report completion only after the cloud operation
 succeeds. A partial failure keeps failed items visible with a retry action;
 successful deletions remain complete.
 An unpublished copy can also be deleted without publishing it on reconnection.
-Cancelling its deletion retains the original upload request. Once the server has
-accepted deletion, cancellation cannot restore that generation.
+Cancelling an unsent deletion retains the original upload request. Once a deletion
+request has been sent, cancellation is unavailable because its outcome can be
+uncertain. Refresh or retry to check its status; do not claim that a server check
+can cancel an in-flight request or restore a retired generation.
 
 Use a portable copy ID and generation for deletion. Reject a stale selection if
 the copy was replaced or changed, and request review of the current item. Keep

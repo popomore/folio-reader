@@ -205,7 +205,9 @@ struct CloudCopyManager: View {
             if item.folderCopy { Text("\(item.fileCount) files, including folder assets").font(.caption).foregroundStyle(.secondary) }
             if cloud.protected(item) { Text("Unsaved draft, review before deleting").font(.caption).foregroundStyle(.secondary) }
             if cloud.uploading(item), cloud.pending(item) == nil { Text("Waiting to publish to iCloud").font(.caption).foregroundStyle(.secondary) }
-            if cloud.pending(item) != nil || item.state == .deleting {
+            if cloud.pending(item)?.phase == .requesting {
+                Text("Deletion requested. Refresh or retry to check its status.").font(.caption).foregroundStyle(.secondary)
+            } else if cloud.pending(item) != nil || item.state == .deleting {
                 Text("Pending deletion").font(.caption).foregroundStyle(.secondary)
             }
             if let error = cloud.itemErrors[item.id] {
@@ -223,7 +225,7 @@ struct CloudCopyManager: View {
         Menu {
             if cloud.pending(item) != nil || item.state == .deleting {
                 Button("Retry Deletion") { Task { await cloud.retryDeletion(item) } }
-                if let request = cloud.pending(item), request.phase != .started {
+                if let request = cloud.pending(item), request.phase == .queued {
                     Button("Cancel Pending Deletion") { Task { await cloud.cancelDeletion(item) } }
                 }
             } else {

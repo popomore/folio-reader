@@ -17,12 +17,12 @@ actor AppleCloudMetadata: CloudMetadata {
     private func prepare() async throws {
         do {
             guard try await container.userRecordID() == account else { throw CloudFailure.accountChanged }
+            if !initialized {
+                _ = try await database.save(CKRecordZone(zoneID: zone))
+                initialized = true
+            }
         } catch let error as CKError where error.code == .networkUnavailable || error.code == .networkFailure {
             throw CloudFailure.offline
-        }
-        if !initialized {
-            _ = try await database.save(CKRecordZone(zoneID: zone))
-            initialized = true
         }
     }
 

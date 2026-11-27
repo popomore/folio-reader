@@ -343,12 +343,8 @@ final class CloudLibrary {
         guard let request = pending(item), !busy(item), let connection else { return }
         do {
             try validate(connection)
-            if request.phase != .queued {
-                let snapshot = try await connection.metadata.snapshot()
-                try validate(connection)
-                let active = snapshot.items.contains { $0.identity == request.item && $0.state == .active }
-                let unpublished = uploading(item) && !snapshot.items.contains { $0.id == request.id }
-                guard active || unpublished else { throw CloudFailure.stale }
+            guard request.phase == .queued else {
+                throw CloudFailure.message("This deletion has already been sent. Refresh or retry to check its status.")
             }
             cache.deletions.removeAll { $0.item == request.item }
             itemErrors[item.id] = nil
@@ -395,7 +391,8 @@ final class CloudLibrary {
     }
 
     func retryDeletion(_ item: CloudItem) async {
-        guard let connection, item.storage == .copy, item.state != .active, !protected(item), !busy(item) else { return }
+        guard let connection, item.storage == .copy, item.state != .active || pending(item) != nil,
+              !protected(item), !busy(item) else { return }
         if pending(item) == nil {
             cache.deletions.append(CloudDeletion(item: item.identity, revision: item.revision, phase: .started))
             do { try persist() } catch { self.error = error.localizedDescription; return }
@@ -440,7 +437,8 @@ final class CloudLibrary {
 
     private func processDeletions(_ connection: CloudConnection) async {
         guard let files else { return }
-        for request in cache.deletions where !busyItems.contains(request.id) {
+        for request in cache.deletions where !busyItems.contains(request.id) &&
+            cache.deletions.contains(where: { $0.item == request.item && $0.revision == request.revision }) {
             busyItems.insert(request.id)
             var committed = false
             do {
