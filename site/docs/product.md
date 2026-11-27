@@ -1,7 +1,5 @@
 # Folio website facts
 
-Historical product and download verification from 2026-11-16/17. Migrated on 2026-11-27 without changing the copy or pinned installer. Reverify each claim before updating it.
-
 English lives at `/`; Simplified Chinese lives at `/zh/`. The site introduces the native application.
 
 ## Folio facts and sources
