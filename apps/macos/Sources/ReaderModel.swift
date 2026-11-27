@@ -359,12 +359,13 @@ final class ReaderModel: ObservableObject {
         activate(group.tabs[(index + offset + group.tabs.count) % group.tabs.count], in: focusedPane)
     }
 
-    func open(_ location: FileLocation, in pane: Pane? = nil, fragment: String? = nil) {
+    func open(_ location: FileLocation, in pane: Pane? = nil, fragment: String? = nil, inheritSharing: Bool = true) {
         let target = pane ?? focusedPane
         let url = location.url
         guard url != nil else { error = "This file is outside the selected folder."; return }
         for source in Pane.allCases {
             guard let tab = groups[source]?.tabs.first(where: { $0.location == location || (url != nil && $0.location.url == url) }) else { continue }
+            if inheritSharing { inheritCloud(tab) }
             if pane != nil, source != target {
                 move(tab, from: source, to: target)
             } else {
@@ -377,21 +378,32 @@ final class ReaderModel: ObservableObject {
             return
         }
         let tab = ReaderTab(location: location)
-        if let peer = groups.values.flatMap(\.tabs).first(where: {
-            $0.location.root.pathComponents == location.root.pathComponents &&
-                $0.cloudItem?.tracks(location.path) == true
-        }) {
-            tab.cloud = peer.cloud
-            tab.cloudItem = peer.cloudItem
-            tab.cloudReadOnly = peer.cloudReadOnly
-            tab.cloudAccess = peer.cloudAccess
-        }
+        if inheritSharing { inheritCloud(tab) }
         tab.pendingFragment = fragment
         var group = groups[target] ?? Group()
         group.tabs.append(tab)
         groups[target] = group
         activate(tab, in: target)
         tab.load()
+    }
+
+    private func inheritCloud(_ tab: ReaderTab) {
+        let peers = [active].compactMap { $0 } + groups.values.flatMap(\.tabs)
+        guard let peer = peers.first(where: {
+            $0.id != tab.id && $0.location.root.pathComponents == tab.location.root.pathComponents &&
+                $0.cloudItem?.tracks(tab.location.path) == true
+        }), !tab.dirty || !peer.cloudReadOnly else { return }
+        tab.cloud = peer.cloud
+        tab.cloudItem = peer.cloudItem
+        tab.cloudReadOnly = peer.cloudReadOnly
+        tab.cloudAccess = peer.cloudAccess
+        if let item = tab.cloudItem, let document = tab.document {
+            var position = tab.readingPosition
+            position.path = tab.location.path
+            position.revision = document.revision
+            tab.readingPosition = position
+            tab.cloud?.recordPosition(item.identity, position: position)
+        }
     }
 
     func sendActiveToCloud(folder: Bool = false) {
@@ -438,7 +450,7 @@ final class ReaderModel: ObservableObject {
             let position = position ?? opened.position
             let path = try CloudPaths.relative(position?.sanitized.path ?? item.path)
             let location = FileLocation(root: opened.access.root, path: path)
-            open(location)
+            open(location, inheritSharing: false)
             guard let tab = active, tab.location == location else { throw CloudFailure.stale }
             guard !tab.dirty else { throw CloudFailure.message("Save or discard the current draft before continuing from another device.") }
             tab.cloud = cloud
