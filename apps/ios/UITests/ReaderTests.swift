@@ -108,7 +108,11 @@ final class ReaderTests: XCTestCase {
         XCTAssertTrue(app.navigationBars["Reading Settings"].waitForExistence(timeout: 5))
         app.buttons["appearance-picker"].tap()
         app.buttons["Dark"].tap()
-        app.switches["Serif Font"].tap()
+        let serif = app.switches["Serif Font"]
+        reveal(serif)
+        XCTAssertEqual(serif.value as? String, "0")
+        serif.coordinate(withNormalizedOffset: CGVector(dx: 0.9, dy: 0.5)).tap()
+        XCTAssertEqual(serif.value as? String, "1")
         screenshot("Dark reading settings")
         app.buttons["Done"].tap()
         tap(app.buttons["Explore Sample Folder"])
@@ -130,6 +134,11 @@ final class ReaderTests: XCTestCase {
     }
 
     private func tap(_ element: XCUIElement) {
+        reveal(element)
+        element.tap()
+    }
+
+    private func reveal(_ element: XCUIElement) {
         for _ in 0..<8 {
             let list = app.collectionViews.firstMatch
             let viewport = list.exists ? list.frame.intersection(app.frame) : app.frame
@@ -139,7 +148,6 @@ final class ReaderTests: XCTestCase {
             else { app.swipeUp() }
         }
         XCTAssertTrue(element.waitForExistence(timeout: 5))
-        element.tap()
     }
 
     private func tapFile(_ path: String) { tap(file(path)) }
