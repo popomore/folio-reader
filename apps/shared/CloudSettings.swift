@@ -205,7 +205,9 @@ struct CloudCopyManager: View {
             if item.folderCopy { Text("\(item.fileCount) files, including folder assets").font(.caption).foregroundStyle(.secondary) }
             if cloud.protected(item) { Text("Unsaved draft, review before deleting").font(.caption).foregroundStyle(.secondary) }
             if cloud.uploading(item), cloud.pending(item) == nil { Text("Waiting to publish to iCloud").font(.caption).foregroundStyle(.secondary) }
-            if cloud.pending(item)?.phase == .requesting {
+            if item.state == .deleted {
+                Text("iCloud copy deleted. Local files are kept until cleanup finishes.").font(.caption).foregroundStyle(.secondary)
+            } else if cloud.pending(item)?.phase == .requesting {
                 Text("Deletion requested. Refresh or retry to check its status.").font(.caption).foregroundStyle(.secondary)
             } else if cloud.pending(item) != nil || item.state == .deleting {
                 Text("Pending deletion").font(.caption).foregroundStyle(.secondary)
@@ -223,6 +225,9 @@ struct CloudCopyManager: View {
 
     private func actions(_ item: CloudItem) -> some View {
         Menu {
+            if cloud.protected(item) || item.state == .deleted {
+                Button("Review Local Files") { cloud.requestLocalReview(item) }
+            }
             if cloud.pending(item) != nil || item.state == .deleting {
                 Button("Retry Deletion") { Task { await cloud.retryDeletion(item) } }
                 if let request = cloud.pending(item), request.phase == .queued {

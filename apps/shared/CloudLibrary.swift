@@ -67,6 +67,7 @@ final class CloudLibrary {
         var deletions: [CloudDeletion] = []
         var bindings: [UUID: Data] = [:]
         var protected: Set<UUID> = []
+        var protectionPaths: [UUID: Set<String>]?
     }
 
     private var cache = Cache()
@@ -80,6 +81,10 @@ final class CloudLibrary {
     private var sessionVersion = UUID()
     private var readingTasks: [UUID: Task<Void, Never>] = [:]
     private var busyItems: Set<UUID> = []
+    private var protectionOwners: [UUID: [UUID: String]] = [:]
+    private var stateVersion: UInt64 = 0
+    private var itemVersions: [UUID: UInt64] = [:]
+    private var readingVersions: [String: UInt64] = [:]
     private(set) var account: String?
     private(set) var refreshing = false
     private(set) var sharing = false
@@ -87,6 +92,7 @@ final class CloudLibrary {
     var error: String?
     var notice: String?
     private(set) var eviction: CloudEviction?
+    private(set) var review: CloudReview?
     let deviceID: UUID
     let deviceName: String
 
@@ -111,8 +117,11 @@ final class CloudLibrary {
         cache.items.filter { item in item.state == .active && !cache.deletions.contains(where: { $0.id == item.id }) }
             .sorted { lastRead($0) > lastRead($1) }
     }
-    var copies: [CloudItem] { cache.items.filter { $0.storage == .copy && $0.state != .deleted } }
+    var copies: [CloudItem] {
+        cache.items.filter { $0.storage == .copy && ($0.state != .deleted || pending($0) != nil || protected($0)) }
+    }
     var retired: Set<UUID> { Set(cache.items.filter { $0.state != .active }.map(\.id)) }
+    var protectedCopies: Set<UUID> { cache.protected }
     var pendingCount: Int { cache.deletions.count }
     var hasPendingWork: Bool { !cache.deletions.isEmpty || !cache.positions.isEmpty || !cache.uploads.isEmpty }
 
@@ -153,9 +162,13 @@ final class CloudLibrary {
         files = nil
         account = nil
         cache = Cache()
+        protectionOwners = [:]
+        itemVersions = [:]
+        readingVersions = [:]
         itemErrors = [:]
         error = nil
         notice = nil
+        review = nil
         refreshing = false
     }
 
@@ -181,6 +194,9 @@ final class CloudLibrary {
                 cache = (try? JSONDecoder().decode(Cache.self, from: Data(contentsOf: cacheURL(next.account)))) ?? Cache()
                 account = next.account
                 itemErrors = [:]
+                protectionOwners = [:]
+                itemVersions = [:]
+                readingVersions = [:]
             }
             connection = next
             files = CloudFiles(connection: next, local: localDirectory(next.account))
@@ -189,11 +205,16 @@ final class CloudLibrary {
                     Task { await self?.refresh() }
                 }
             }
+            let beforeSnapshot = stateVersion
             let snapshot = try await next.metadata.snapshot()
             try validate(next)
-            cache.items = snapshot.items
+            let changedItems = cache.items.filter { (itemVersions[$0.id] ?? 0) > beforeSnapshot }
+            let changedIDs = Set(changedItems.map(\.id))
+            let changedReadings = cache.readings.filter { (readingVersions[$0.id] ?? 0) > beforeSnapshot }
+            cache.items = snapshot.items.filter { !changedIDs.contains($0.id) } + changedItems
             for upload in cache.uploads where !cache.items.contains(where: { $0.id == upload.id }) { cache.items.append(upload) }
             cache.readings = snapshot.readings
+            for reading in changedReadings { merge(reading) }
             for position in cache.positions { merge(position) }
             error = nil
             try persist()
@@ -232,11 +253,12 @@ final class CloudLibrary {
         if !connection.testOnly, FileManager.default.isUbiquitousItem(at: root.appendingPathComponent(path)),
            !root.pathComponents.starts(with: connection.root.appendingPathComponent("Documents/Reading Copies").pathComponents) {
             item = try await files.link(root: root, path: path, device: deviceName)
-            try bind(item, to: root, connection: connection)
+            try await bind(item, to: root, connection: connection)
         } else { item = try await files.create(root: root, path: path, folder: folder, device: deviceName) }
         try validate(connection)
         cache.uploads.append(item)
         cache.items.append(item)
+        mark(item: item.id)
         try persist()
         await processUploads(connection)
         recordPosition(item.identity, position: position)
@@ -261,7 +283,25 @@ final class CloudLibrary {
             _ = try CloudPaths.contained(root.appendingPathComponent(item.path), in: root)
         }
         try validate(connection)
-        return CloudOpened(item: item, access: access, position: latestReading(item)?.position)
+        guard let current = self.item(item.id), current.identity == item.identity, current.state == .active,
+              pending(current) == nil, !uploading(current) else { throw CloudFailure.stale }
+        return CloudOpened(item: current, access: access, position: latestReading(current)?.position)
+    }
+
+    func requestLocalReview(_ item: CloudItem) {
+        guard self.item(item.id)?.identity == item.identity, item.storage == .copy else { return }
+        review = CloudReview(item: item.id)
+    }
+
+    func openLocalReview(_ requested: CloudItem) async throws -> CloudOpened {
+        guard let connection, let files else { throw CloudFailure.unavailable }
+        try validate(connection)
+        guard let item = item(requested.id), item.identity == requested.identity, item.storage == .copy else { throw CloudFailure.stale }
+        let access = try await files.cachedDownload(item)
+        try validate(connection)
+        guard self.item(item.id)?.identity == item.identity else { throw CloudFailure.stale }
+        let path = cache.protectionPaths?[item.id]?.sorted().first ?? latestReading(item)?.position.path ?? item.path
+        return CloudOpened(item: item, access: access, position: CloudPosition(path: path))
     }
 
     func needsFolder(_ item: CloudItem) -> Bool {
@@ -272,13 +312,15 @@ final class CloudLibrary {
         return stale
     }
 
-    func bind(_ item: CloudItem, to root: URL) throws {
+    func bind(_ item: CloudItem, to root: URL, allowChanged: Bool = false) async throws {
         guard let connection else { throw CloudFailure.unavailable }
-        try bind(item, to: root, connection: connection)
+        guard canContinue(item) else { throw CloudFailure.stale }
+        try await bind(item, to: root, connection: connection, allowChanged: allowChanged)
+        guard canContinue(item) else { throw CloudFailure.stale }
         try persist()
     }
 
-    private func bind(_ item: CloudItem, to root: URL, connection: CloudConnection) throws {
+    private func bind(_ item: CloudItem, to root: URL, connection: CloudConnection, allowChanged: Bool = false) async throws {
         try validate(connection)
         guard item.storage == .linked else { throw CloudFailure.unsafe }
         let access = CloudAccess(root)
@@ -288,13 +330,44 @@ final class CloudLibrary {
               connection.testOnly || FileManager.default.isUbiquitousItem(at: file) else {
             throw CloudFailure.message("Choose the iCloud folder containing this document.")
         }
+        guard let files else { throw CloudFailure.unavailable }
+        let selected = try await files.link(root: root, path: item.path, device: deviceName)
+        try validate(connection)
+        guard allowChanged || selected.revision == item.revision else { throw CloudFailure.bindingChanged }
         cache.bindings[item.id] = try root.bookmarkData(options: .minimalBookmark, includingResourceValuesForKeys: nil, relativeTo: nil)
     }
 
-    func setProtected(_ item: CloudIdentity, _ value: Bool) {
-        guard self.item(item.id)?.identity == item else { return }
-        if value { cache.protected.insert(item.id) } else { cache.protected.remove(item.id) }
+    func setProtected(_ item: CloudIdentity, _ value: Bool, owner: UUID? = nil, document: String? = nil) {
+        guard let current = self.item(item.id), current.identity == item else { return }
+        let path = document ?? current.path
+        guard (try? CloudPaths.relative(path)) != nil else { return }
+        let ownerID = owner ?? deviceID
+        var paths = cache.protectionPaths ?? [:]
+        let known = paths[item.id] != nil
+        if value {
+            protectionOwners[item.id, default: [:]][ownerID] = path
+            paths[item.id, default: []].insert(path)
+            cache.protected.insert(item.id)
+        } else {
+            protectionOwners[item.id]?[ownerID] = nil
+            if protectionOwners[item.id]?.values.contains(path) != true { paths[item.id]?.remove(path) }
+            if paths[item.id]?.isEmpty != false, known || owner == nil {
+                paths[item.id] = nil
+                cache.protected.remove(item.id)
+            }
+        }
+        cache.protectionPaths = paths
         do { try persist() } catch { self.error = error.localizedDescription }
+    }
+
+    func releaseProtection(_ item: CloudIdentity, owner: UUID) {
+        guard self.item(item.id)?.identity == item else { return }
+        protectionOwners[item.id]?[owner] = nil
+    }
+
+    func canContinue(_ item: CloudItem) -> Bool {
+        self.item(item.id)?.identity == item.identity && self.item(item.id)?.state == .active &&
+            pending(item) == nil && !uploading(item)
     }
 
     func recordPosition(_ item: CloudIdentity, position: CloudPosition) {
@@ -304,6 +377,8 @@ final class CloudLibrary {
                                    modified: Date(), position: position.sanitized)
         cache.positions.removeAll { $0.id == reading.id }
         cache.positions.append(reading)
+        stateVersion &+= 1
+        readingVersions[reading.id] = stateVersion
         merge(reading)
         do { try persist() } catch { self.error = error.localizedDescription }
         readingTasks[item.id]?.cancel()
@@ -375,6 +450,7 @@ final class CloudLibrary {
                 try await connection.metadata.create(item)
                 try validate(connection)
                 cache.uploads.removeAll { $0.identity == item.identity }
+                mark(item: item.id)
                 itemErrors[item.id] = nil
                 try persist()
             } catch {
@@ -491,6 +567,11 @@ final class CloudLibrary {
     private func replace(_ item: CloudItem) {
         cache.items.removeAll { $0.id == item.id }
         cache.items.append(item)
+        mark(item: item.id)
+    }
+    private func mark(item: UUID) {
+        stateVersion &+= 1
+        itemVersions[item] = stateVersion
     }
     private func merge(_ reading: CloudReading) {
         if let previous = cache.readings.first(where: { $0.id == reading.id }), previous.modified > reading.modified { return }

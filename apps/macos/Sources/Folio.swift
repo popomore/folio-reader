@@ -168,7 +168,8 @@ private struct WorkspaceSceneContent: View {
             .preferredColorScheme(model.appearance.workspace.colorScheme)
             .frame(minWidth: 660, minHeight: 420)
             .onContinueUserActivity(CloudEnvironment.activityType, perform: model.continueCloudActivity)
-            .userActivity(CloudEnvironment.activityType, isActive: model.active?.cloudItem != nil && !model.cloud.testOnly) { activity in
+            .userActivity(CloudEnvironment.activityType,
+                isActive: model.active?.cloudItem.map { model.cloud.canContinue($0) } == true && !model.cloud.testOnly) { activity in
                 if let tab = model.active, let item = tab.cloudItem {
                     CloudContinuation.configure(activity, item: item, position: tab.readingPosition,
                         folder: item.storage == .linked ? tab.location.root : nil)
@@ -189,6 +190,10 @@ private struct WorkspaceSceneContent: View {
             .onChange(of: model.cloud.retired) { _, ids in model.retireCloudTabs(ids) }
             .onChange(of: model.cloud.eviction) { _, event in
                 if let event { model.retireCloudTabs([event.item], downloadsOnly: true) }
+            }
+            .onChange(of: model.cloud.review) { _, request in
+                guard let request, let item = model.cloud.item(request.item) else { return }
+                Task { await model.openCloud(item, localReview: true); openWindow(id: "workspace") }
             }
             .onChange(of: model.cloud.account) { old, new in
                 if old != nil, old != new { model.retireCloudTabs([], all: true) }

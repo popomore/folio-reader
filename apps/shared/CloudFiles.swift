@@ -125,8 +125,7 @@ actor CloudFiles {
         let cache = local.appendingPathComponent("Downloads/\(item.directoryName)")
         try CloudPaths.rejectLinks(cache, under: local)
         _ = try CloudPaths.contained(cache, in: local)
-        if (try? validateManifest(item, at: cache)) != nil,
-           FileManager.default.fileExists(atPath: cache.appendingPathComponent("payload/\(item.path)").path) {
+        if completeDownload(item, at: cache) {
             let payload = try CloudPaths.contained(cache.appendingPathComponent("payload"), in: cache)
             guard !isLink(cache), !isLink(payload), !isLink(cache.deletingLastPathComponent()) else { throw CloudFailure.unsafe }
             return CloudAccess(payload)
@@ -134,7 +133,8 @@ actor CloudFiles {
         let sourceManifest = directory.appendingPathComponent(".folio-copy.json")
         try await download(sourceManifest)
         let manifest = try validateManifest(item, at: directory)
-        if (try? validateManifest(item, at: cache)) == nil {
+        if !completeDownload(item, at: cache) {
+            try verifyLocalCleanup(item, allowingMissing: true)
             let stage = local.appendingPathComponent("Downloads/incoming-\(UUID().uuidString)")
             defer { try? FileManager.default.removeItem(at: stage) }
             try FileManager.default.createDirectory(at: stage, withIntermediateDirectories: true)
@@ -153,13 +153,32 @@ actor CloudFiles {
                 try FileManager.default.createDirectory(at: destination.deletingLastPathComponent(), withIntermediateDirectories: true)
                 try data.write(to: destination)
             }
-            try Self.read(sourceManifest, limit: Self.maximumManifestBytes).write(to: stage.appendingPathComponent(".folio-copy.json"))
+            try JSONEncoder().encode(manifest).write(to: stage.appendingPathComponent(".folio-copy.json"))
             try connection.validate()
             try FileManager.default.createDirectory(at: cache.deletingLastPathComponent(), withIntermediateDirectories: true)
-            if FileManager.default.fileExists(atPath: cache.path) { try FileManager.default.removeItem(at: cache) }
-            try FileManager.default.moveItem(at: stage, to: cache)
+            try coordinate(cache, writing: true) { actual in
+                let target = try CloudPaths.contained(actual, in: local)
+                guard target.path == cache.resolvingSymlinksInPath().standardizedFileURL.path else { throw CloudFailure.unsafe }
+                try CloudPaths.rejectLinks(cache, under: local)
+                try verifyLocalCleanup(item, allowingMissing: true)
+                if FileManager.default.fileExists(atPath: target.path) { try FileManager.default.removeItem(at: target) }
+                try FileManager.default.moveItem(at: stage, to: target)
+            }
         }
         return CloudAccess(cache.appendingPathComponent("payload"))
+    }
+
+    func cachedDownload(_ item: CloudItem) throws -> CloudAccess {
+        try connection.validate()
+        guard item.storage == .copy else { throw CloudFailure.unsafe }
+        let cache = local.appendingPathComponent("Downloads/\(item.directoryName)")
+        try CloudPaths.rejectLinks(cache, under: local)
+        _ = try CloudPaths.contained(cache, in: local)
+        _ = try validateManifest(item, at: cache)
+        let payload = cache.appendingPathComponent("payload")
+        try CloudPaths.rejectLinks(payload, under: cache)
+        guard try payload.resourceValues(forKeys: [.isDirectoryKey]).isDirectory == true else { throw CloudFailure.unsafe }
+        return CloudAccess(payload)
     }
 
     func remove(_ item: CloudItem) async throws {
@@ -168,10 +187,10 @@ actor CloudFiles {
         try verifyLocalCleanup(item)
         let directory = try directory(item)
         if FileManager.default.fileExists(atPath: directory.path) {
-            try await download(directory.appendingPathComponent(".folio-copy.json"))
+            try await download(directory.appendingPathComponent(".folio-copy.json"), requireCurrent: true)
             let manifest = try validateManifest(item, at: directory)
             for path in manifest.files?.keys ?? Dictionary<String, String>().keys {
-                try await download(directory.appendingPathComponent("payload/\(path)"))
+                try await download(directory.appendingPathComponent("payload/\(path)"), requireCurrent: true)
             }
             try coordinate(directory, writing: true) { url in
                 try connection.validate()
@@ -212,7 +231,10 @@ actor CloudFiles {
 
     func hasResidue(_ item: CloudItem) throws -> Bool {
         try connection.validate()
-        return FileManager.default.fileExists(atPath: try directory(item).path)
+        let cache = local.appendingPathComponent("Downloads/\(item.directoryName)")
+        try CloudPaths.rejectLinks(cache, under: local)
+        _ = try CloudPaths.contained(cache, in: local)
+        return FileManager.default.fileExists(atPath: try directory(item).path) || FileManager.default.fileExists(atPath: cache.path)
     }
 
     func evict(_ item: CloudItem) throws {
@@ -239,7 +261,7 @@ actor CloudFiles {
         }
     }
 
-    func verifyLocalCleanup(_ item: CloudItem) throws {
+    func verifyLocalCleanup(_ item: CloudItem, allowingMissing: Bool = false) throws {
         try connection.validate()
         let cache = local.appendingPathComponent("Downloads/\(item.directoryName)")
         try CloudPaths.rejectLinks(cache, under: local)
@@ -259,14 +281,22 @@ actor CloudFiles {
                 found.insert(try CloudPaths.relative(file, in: payload))
             }
         }
-        guard found == Set(manifest.files?.keys ?? Dictionary<String, String>().keys) else { throw CloudFailure.protectedDraft }
+        let expected = Set(manifest.files?.keys ?? Dictionary<String, String>().keys)
+        guard allowingMissing ? found.isSubset(of: expected) : found == expected else { throw CloudFailure.protectedDraft }
         for (path, hash) in manifest.files ?? [:] {
+            if allowingMissing, !found.contains(path) { continue }
             let file = payload.appendingPathComponent(path)
             try CloudPaths.rejectLinks(file, under: cache)
             guard CloudPaths.digest(try Self.read(file, limit: Self.maximumFileBytes)) == hash else {
                 throw CloudFailure.message("This local download has changes from another app. Keep or export those changes before removing it.")
             }
         }
+    }
+
+    private func completeDownload(_ item: CloudItem, at cache: URL) -> Bool {
+        guard FileManager.default.fileExists(atPath: cache.path) else { return false }
+        do { try verifyLocalCleanup(item); return true }
+        catch { return false }
     }
 
     @discardableResult
@@ -282,7 +312,7 @@ actor CloudFiles {
         return manifest
     }
 
-    private func download(_ url: URL) async throws {
+    private func download(_ url: URL, requireCurrent: Bool = false) async throws {
         try connection.validate()
         if connection.testOnly { return }
         for _ in 0..<120 {
@@ -292,7 +322,7 @@ actor CloudFiles {
             catch let error as CocoaError where error.code == .fileReadNoSuchFile || error.code == .fileNoSuchFile { }
             let values = try? url.resourceValues(forKeys: [.ubiquitousItemDownloadingStatusKey, .isRegularFileKey, .isDirectoryKey])
             if values?.ubiquitousItemDownloadingStatus == .current ||
-                values?.ubiquitousItemDownloadingStatus == .downloaded { return }
+                (!requireCurrent && values?.ubiquitousItemDownloadingStatus == .downloaded) { return }
             try await Task.sleep(for: .milliseconds(250))
         }
         throw CloudFailure.waitingForFile

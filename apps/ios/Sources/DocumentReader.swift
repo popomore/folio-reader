@@ -22,12 +22,12 @@ private struct ReaderContent: View {
     @State private var heading: HeadingTarget?
     @State private var export: PreviewFile?
     @State private var exporting = false
-    @State private var sentItem: CloudItem?
+    @State private var didSend = false
     @State private var sendFolder = false
     @State private var discardRecovered = false
     let cloudItem: CloudItem?
     let follow: (String, String?) -> Void
-    private var sharedItem: CloudItem? { cloudItem ?? sentItem }
+    private var sharedItem: CloudItem? { session.sharedItem }
 
     init(session: DocumentSession, fragment: String?, cloudItem: CloudItem?,
          follow: @escaping (String, String?) -> Void) {
@@ -41,13 +41,14 @@ private struct ReaderContent: View {
         @Bindable var session = session
         VStack(spacing: 0) {
             if session.recovered {
-                HStack {
+                VStack(alignment: .leading, spacing: 8) {
                     Label("Unsaved draft recovered", systemImage: "arrow.uturn.backward")
-                    Spacer()
-                    Button("Review") { session.beginEditing() }
-                        .disabled(!session.canEdit)
-                    if session.readOnly {
-                        Button("Discard Draft", role: .destructive) { discardRecovered = true }
+                    HStack {
+                        if session.canEdit { Button("Review") { session.beginEditing() } }
+                        if session.readOnly {
+                            ShareLink("Share Recovered Draft", item: session.draft)
+                            Button("Discard Draft", role: .destructive) { discardRecovered = true }
+                        }
                     }
                 }
                 .font(.subheadline).padding().background(.quaternary)
@@ -82,7 +83,7 @@ private struct ReaderContent: View {
                 Text("iCloud reading copy. Edit the original file to make changes.")
                     .font(.footnote).foregroundStyle(.secondary).padding(.horizontal)
             }
-            if sentItem != nil, let notice = cloud?.notice {
+            if didSend, let notice = cloud?.notice {
                 Text(notice).font(.footnote).foregroundStyle(.secondary).padding()
             }
         }
@@ -144,27 +145,34 @@ private struct ReaderContent: View {
         .sheet(isPresented: $session.editing) { DocumentEditor(session: session) }
         .sheet(item: $export) { file in ShareSheet(file: file.url) }
         .task {
+            session.resumeObservation()
             await session.loadIfNeeded()
+            guard !Task.isCancelled else { return }
             if session.opened != nil, let item = sharedItem {
                 var position = session.readingPosition
                 position.path = session.path
                 cloud?.recordPosition(item.identity, position: position)
-                if cloudItem != nil { cloud?.setProtected(item.identity, session.hasChanges || session.recovered || session.saving) }
             }
+            updateProtection()
+        }
+        .onDisappear {
+            session.stopObservation()
+            if session.readOnly, let cloudItem { cloud?.releaseProtection(cloudItem.identity, owner: session.protectionOwner) }
         }
         .onChange(of: scenePhase) { _, phase in
             if phase != .active { Task { await session.persistDraft() } }
         }
         .onChange(of: session.hasChanges) { _, dirty in
-            if let cloudItem { cloud?.setProtected(cloudItem.identity, dirty || session.recovered || session.saving) }
+            updateProtection()
         }
         .onChange(of: session.recovered) { _, recovered in
-            if let cloudItem { cloud?.setProtected(cloudItem.identity, recovered || session.hasChanges || session.saving) }
+            updateProtection()
         }
         .onChange(of: session.saving) { _, saving in
-            if let cloudItem { cloud?.setProtected(cloudItem.identity, saving || session.recovered || session.hasChanges) }
+            updateProtection()
         }
-        .userActivity(CloudEnvironment.activityType, isActive: sharedItem != nil && session.opened != nil && cloud?.testOnly != true) { activity in
+        .userActivity(CloudEnvironment.activityType,
+            isActive: sharedItem.map { cloud?.canContinue($0) == true } == true && session.opened != nil && cloud?.testOnly != true) { activity in
             if let item = sharedItem {
                 var position = session.readingPosition
                 position.path = session.path
@@ -172,6 +180,12 @@ private struct ReaderContent: View {
                     folder: item.storage == .linked ? session.opened?.access.root : nil)
             }
         }
+    }
+
+    private func updateProtection() {
+        guard session.readOnly, let cloudItem else { return }
+        cloud?.setProtected(cloudItem.identity, session.hasChanges || session.recovered || session.saving,
+            owner: session.protectionOwner, document: session.path)
     }
 
     private func updatePosition(_ position: CloudPosition) {
@@ -185,8 +199,11 @@ private struct ReaderContent: View {
     private func send(folder: Bool) {
         guard let cloud, let opened = session.opened else { return }
         Task {
-            do { sentItem = try await cloud.send(root: opened.access.root, path: session.path, folder: folder,
-                                                 position: session.readingPosition) }
+            do {
+                session.sharedItem = try await cloud.send(root: opened.access.root, path: session.path, folder: folder,
+                                                         position: session.readingPosition)
+                didSend = true
+            }
             catch { session.error = error.localizedDescription }
         }
     }

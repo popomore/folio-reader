@@ -114,12 +114,17 @@ final class CloudReaderTests: XCTestCase {
         let notice = app.staticTexts.containing(NSPredicate(format: "label CONTAINS %@", "Available in Continue Reading")).firstMatch
         XCTAssertTrue(notice.waitForExistence(timeout: 15))
         XCTAssertTrue(app.buttons["Edit Document"].exists)
+        let linked = app.webViews.links["Field Notes"]
+        XCTAssertTrue(linked.waitForExistence(timeout: 10))
+        linked.tap()
+        XCTAssertTrue(app.webViews.staticTexts["Field Notes"].waitForExistence(timeout: 30))
+        XCTAssertTrue(app.buttons["Edit Document"].exists)
         app.terminate()
         app.launch()
         let copy = app.buttons["continue-Welcome.md"]
         XCTAssertTrue(copy.waitForExistence(timeout: 30))
         copy.tap()
-        XCTAssertTrue(app.webViews.staticTexts["A place for your project files"].waitForExistence(timeout: 30))
+        XCTAssertTrue(app.webViews.staticTexts["Field Notes"].waitForExistence(timeout: 30))
         XCTAssertFalse(app.buttons["Edit Document"].exists)
         screenshot("Local project folder sent as a read-only iCloud copy")
     }

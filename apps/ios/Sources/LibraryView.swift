@@ -14,7 +14,13 @@ struct LibraryView: View {
     @State private var pickerMode: PickerMode = .folder
     @State private var showingPicker = false
     @State private var settings = false
-    @State private var connecting: CloudItem?
+    @State private var connecting: CloudFolderRequest?
+    @State private var bindingReview: BindingReview?
+
+    private struct BindingReview {
+        let request: CloudFolderRequest
+        let access: CloudAccess
+    }
 
     var body: some View {
         @Bindable var library = library
@@ -44,10 +50,15 @@ struct LibraryView: View {
             case .success(let urls):
                 perform {
                     if pickerMode == .folder, let url = urls.first {
-                        if let item = connecting {
-                            try cloud.bind(item, to: url)
+                        if let request = connecting {
+                            let opened: CloudOpened
+                            do { opened = try await request.complete(using: cloud, folder: url) }
+                            catch CloudFailure.bindingChanged {
+                                bindingReview = BindingReview(request: request, access: CloudAccess(url))
+                                return
+                            }
                             connecting = nil
-                            try await openCloud(item)
+                            try await showCloud(opened)
                             return
                         }
                         let folder = try await library.add(url)
@@ -58,12 +69,28 @@ struct LibraryView: View {
                     }
                 }
             case .failure(let error):
+                connecting = nil
                 if (error as? CocoaError)?.code != .userCancelled {
                     library.error = error.localizedDescription
                 }
             }
         }
         .sheet(isPresented: $settings) { ReadingSettings() }
+        .alert("Use this document?", isPresented: Binding(get: { bindingReview != nil }, set: { if !$0 { bindingReview = nil } })) {
+            Button("Use Selected Document") {
+                guard let review = bindingReview else { return }
+                bindingReview = nil
+                perform {
+                    defer { withExtendedLifetime(review.access) {} }
+                    let opened = try await review.request.complete(using: cloud, folder: review.access.root, allowChanged: true)
+                    connecting = nil
+                    try await showCloud(opened)
+                }
+            }
+            Button("Cancel", role: .cancel) { bindingReview = nil; connecting = nil }
+        } message: {
+            Text("The selected file differs from the shared version. It may have changed since sharing, or this may be a different folder. Use it only if it is the document you want to continue.")
+        }
         .alert("Unable to Complete Action", isPresented: Binding(
             get: { library.error != nil }, set: { if !$0 { library.error = nil } }
         )) { Button("OK") { library.error = nil } } message: { Text(library.error ?? "") }
@@ -80,9 +107,9 @@ struct LibraryView: View {
                 await cloud.refresh()
                 guard let item = cloud.item(continuation.identity.id), item.identity == continuation.identity else { throw CloudFailure.stale }
                 if item.storage == .linked, let folder = continuation.folder {
-                    try? cloud.bind(item, to: folder)
+                    try? await cloud.bind(item, to: folder)
                 }
-                if cloud.needsFolder(item) { pick(.folder, connecting: item) }
+                if cloud.needsFolder(item) { pick(.folder, connecting: item, position: continuation.position) }
                 else { try await openCloud(item, position: continuation.position) }
             }
         }
@@ -99,21 +126,24 @@ struct LibraryView: View {
             Task { await cloud.refresh() }
         }
         .onChange(of: cloud.retired) { _, retired in
-            if let item = navigation.selected?.cloudItem, retired.contains(item.id) {
-                navigation.selected = nil
-            }
-            navigation.routes.removeAll { if case .file(let file) = $0, let item = file.cloudItem { retired.contains(item.id) } else { false } }
+            navigation.retireCloudItems(retired, protecting: cloud.protectedCopies)
         }
         .onChange(of: cloud.account) { old, new in
             if old != nil, old != new {
-                navigation.routes.removeAll { if case .file(let file) = $0 { file.cloudItem != nil } else { false } }
-                if navigation.selected?.cloudItem != nil { navigation.selected = nil }
+                navigation.retireCloudItems([], all: true, protecting: cloud.protectedCopies)
             }
         }
         .onChange(of: cloud.eviction) { _, event in
             guard let event else { return }
-            if navigation.selected?.cloudItem?.id == event.item { navigation.selected = nil }
-            navigation.routes.removeAll { if case .file(let file) = $0 { file.cloudItem?.id == event.item } else { false } }
+            if let selected = navigation.selected, selected.readOnly, selected.sharedItem?.id == event.item, !selected.hasProtectedDraft {
+                navigation.selected = nil
+            }
+            navigation.routes.removeAll { if case .file(let file) = $0 { file.readOnly && file.sharedItem?.id == event.item && !file.hasProtectedDraft } else { false } }
+        }
+        .onChange(of: cloud.review) { _, request in
+            guard let request, let item = cloud.item(request.item) else { return }
+            settings = false
+            perform { try await openCloud(item, localReview: true) }
         }
         .onChange(of: sizeClass) { _, next in
             navigation.adapt(toCompact: next == .compact)
@@ -146,15 +176,17 @@ struct LibraryView: View {
             }
     }
 
-    private func pick(_ mode: PickerMode, connecting item: CloudItem? = nil) {
-        connecting = item
+    private func pick(_ mode: PickerMode, connecting item: CloudItem? = nil, position: CloudPosition? = nil) {
+        connecting = item.map { CloudFolderRequest(item: $0, position: position) }
         pickerMode = mode
         showingPicker = true
     }
 
     private func document(_ selection: FileSelection) -> some View {
         DocumentReader(selection: selection, follow: { path, fragment in
-            open(selection.folder, path, fragment: fragment, cloudItem: selection.cloudItem)
+            let shared = selection.sharedItem
+            let tracked = shared.flatMap { $0.folderCopy || $0.storage == .linked ? $0 : nil }
+            open(selection.folder, path, fragment: fragment, cloudItem: tracked, readOnly: selection.readOnly)
         }).id(selection.id)
     }
 
@@ -250,14 +282,21 @@ struct LibraryView: View {
         .overlay { if library.busy { ProgressView("Opening…").padding().background(.regularMaterial, in: RoundedRectangle(cornerRadius: 12)) } }
     }
 
-    private func open(_ folder: SavedFolder, _ path: String, fragment: String? = nil, cloudItem: CloudItem? = nil) {
-        navigation.open(FileSelection(folder: folder, path: path, fragment: fragment, cloudItem: cloudItem), compact: sizeClass == .compact)
-        if cloudItem == nil { library.record(folder, path: path) }
+    private func open(_ folder: SavedFolder, _ path: String, fragment: String? = nil, cloudItem: CloudItem? = nil, readOnly: Bool = false) {
+        navigation.open(FileSelection(folder: folder, path: path, fragment: fragment, cloudItem: cloudItem, readOnly: readOnly), compact: sizeClass == .compact)
+        if !readOnly { library.record(folder, path: path) }
     }
 
-    private func openCloud(_ item: CloudItem, position: CloudPosition? = nil) async throws {
-        let opened = try await cloud.open(item)
+    private func openCloud(_ item: CloudItem, position: CloudPosition? = nil, localReview: Bool = false) async throws {
+        let opened: CloudOpened
+        if localReview { opened = try await cloud.openLocalReview(item) }
+        else { opened = try await cloud.open(item) }
+        try await showCloud(opened, position: position)
+    }
+
+    private func showCloud(_ opened: CloudOpened, position: CloudPosition? = nil) async throws {
         defer { withExtendedLifetime(opened.access) {} }
+        let item = opened.item
         let folder: SavedFolder
         if item.storage == .copy {
             let remembered = try await WorkspaceIO.remember(opened.access.root)

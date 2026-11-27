@@ -54,6 +54,7 @@ final class ReaderTab: ObservableObject, Identifiable {
     private var draftTask: Task<Void, Never>?
     private var previewNeedsReload = false
     private var documentObserver: CloudFileObservation?
+    private var observationWanted = false
 
     init(location: FileLocation, readOnly: Bool = false, archiveDepth: Int = 0) {
         self.location = location
@@ -76,6 +77,9 @@ final class ReaderTab: ObservableObject, Identifiable {
     }
 
     func load() {
+        documentObserver?.stop()
+        documentObserver = nil
+        observationWanted = true
         readTask?.cancel()
         let location = location
         mode = .reading
@@ -103,7 +107,7 @@ final class ReaderTab: ObservableObject, Identifiable {
                     position.path = location.path
                     cloud?.recordPosition(item.identity, position: position)
                 }
-                if FileManager.default.isUbiquitousItem(at: location.root.appendingPathComponent(location.path)) {
+                if observationWanted, FileManager.default.isUbiquitousItem(at: location.root.appendingPathComponent(location.path)) {
                     documentObserver = CloudFileObservation(url: location.root.appendingPathComponent(location.path)) { [weak self] moved in
                         guard let self else { return }
                         if moved != nil { self.error = "This document moved. Open it again from its folder." }
@@ -167,6 +171,14 @@ final class ReaderTab: ObservableObject, Identifiable {
         draftTask = nil
         draftPreview = nil
     }
+
+    func stopObservation() {
+        observationWanted = false
+        documentObserver?.stop()
+        documentObserver = nil
+    }
+
+    deinit { documentObserver?.stop() }
 
     @discardableResult
     func save() -> Bool {
@@ -404,7 +416,7 @@ final class ReaderModel: ObservableObject {
         }
     }
 
-    func openCloud(_ item: CloudItem, position: CloudPosition? = nil) async {
+    func openCloud(_ item: CloudItem, position: CloudPosition? = nil, localReview: Bool = false) async {
         do {
             if cloud.needsFolder(item) {
                 let panel = NSOpenPanel()
@@ -412,9 +424,20 @@ final class ReaderModel: ObservableObject {
                 panel.canChooseFiles = false
                 panel.message = "Choose the iCloud folder containing \(item.name)."
                 guard panel.runModal() == .OK, let root = panel.url else { return }
-                try cloud.bind(item, to: root)
+                do { try await cloud.bind(item, to: root) }
+                catch CloudFailure.bindingChanged {
+                    let alert = NSAlert()
+                    alert.messageText = "Use this document?"
+                    alert.informativeText = "The selected file differs from the shared version. It may have changed since sharing, or this may be a different folder."
+                    alert.addButton(withTitle: "Cancel")
+                    alert.addButton(withTitle: "Use Selected Document")
+                    guard alert.runModal() == .alertSecondButtonReturn else { return }
+                    try await cloud.bind(item, to: root, allowChanged: true)
+                }
             }
-            let opened = try await cloud.open(item)
+            let opened: CloudOpened
+            if localReview { opened = try await cloud.openLocalReview(item) }
+            else { opened = try await cloud.open(item) }
             let position = position ?? opened.position
             let path = try CloudPaths.relative(position?.sanitized.path ?? item.path)
             let location = FileLocation(root: opened.access.root, path: path)
@@ -440,7 +463,7 @@ final class ReaderModel: ObservableObject {
                 error = CloudFailure.stale.localizedDescription
                 return
             }
-            if item.storage == .linked, let folder = continuation.folder { try? cloud.bind(item, to: folder) }
+            if item.storage == .linked, let folder = continuation.folder { try? await cloud.bind(item, to: folder) }
             await openCloud(item, position: continuation.position)
         }
     }
@@ -488,6 +511,7 @@ final class ReaderModel: ObservableObject {
 
     func close(_ tab: ReaderTab, in pane: Pane) {
         guard var group = groups[pane], tab.leaveDraft() else { return }
+        tab.stopObservation()
         group.remove(tab)
         groups[pane] = group
         updateActive()

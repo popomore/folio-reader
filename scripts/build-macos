@@ -132,9 +132,10 @@ if [[ -n "${FOLIO_ICLOUD_PROFILE:-}" ]]; then
     identity="${FOLIO_APPLE_SIGNING_IDENTITY:?Set the signing identity for the iCloud profile}"
   fi
   security cms -D -i "$FOLIO_ICLOUD_PROFILE" > "$stage/icloud-profile.plist"
-  python3 - "$stage/icloud-profile.plist" apps/macos/iCloud.entitlements "$stage/icloud-entitlements.plist" "$bundle_id" "$identity" "$staged/Contents/Info.plist" <<'CLOUD'
+  FOLIO_ICLOUD_BUILD_MODE="$mode" python3 - "$stage/icloud-profile.plist" apps/macos/iCloud.entitlements "$stage/icloud-entitlements.plist" "$bundle_id" "$identity" "$staged/Contents/Info.plist" <<'CLOUD'
 import datetime
 import fnmatch
+import os
 import plistlib
 import sys
 
@@ -159,9 +160,14 @@ for key, values in requested.items():
         sys.exit("The profile does not grant the requested iCloud container and services.")
 requested["com.apple.application-identifier"] = identifier
 requested["com.apple.developer.team-identifier"] = team
-environment = granted.get("com.apple.developer.icloud-container-environment")
-if environment not in ("Development", "Production"):
+grant = granted.get("com.apple.developer.icloud-container-environment")
+values = [grant] if isinstance(grant, str) else grant
+if not isinstance(values, list) or not values or any(value not in ("Development", "Production") for value in values):
     sys.exit("The iCloud profile must specify its CloudKit environment.")
+preferred = "Production" if os.environ.get("FOLIO_ICLOUD_BUILD_MODE") in ("release", "preview-release") else "Development"
+environment = os.environ.get("FOLIO_ICLOUD_ENVIRONMENT") or (values[0] if len(set(values)) == 1 else preferred)
+if environment not in values:
+    sys.exit("The iCloud profile does not grant the requested CloudKit environment.")
 requested["com.apple.developer.icloud-container-environment"] = environment
 with open(info_path, "rb") as file:
     info = plistlib.load(file)

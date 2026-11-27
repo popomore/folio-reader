@@ -2,7 +2,7 @@ import CryptoKit
 import Foundation
 
 enum CloudFailure: LocalizedError, Equatable, Sendable {
-    case unavailable, notEnabled, accountChanged, offline, stale, unsafe, protectedDraft, waitingForFile
+    case unavailable, notEnabled, accountChanged, offline, stale, unsafe, protectedDraft, waitingForFile, bindingChanged
     case message(String)
 
     var errorDescription: String? {
@@ -15,6 +15,7 @@ enum CloudFailure: LocalizedError, Equatable, Sendable {
         case .unsafe: "This item is outside Folio's managed reading copies."
         case .protectedDraft: "Save or explicitly discard this document's unsaved draft before removing it."
         case .waitingForFile: "Waiting for the file to arrive from iCloud. Try again after synchronization finishes."
+        case .bindingChanged: "This file differs from the shared document. Confirm that this is the document you want to use."
         case .message(let message): message
         }
     }
@@ -110,6 +111,11 @@ struct CloudManifest: Codable, Equatable, Sendable {
 
 struct CloudEviction: Equatable, Sendable {
     let event = UUID()
+    let item: UUID
+}
+
+struct CloudReview: Equatable, Sendable {
+    let id = UUID()
     let item: UUID
 }
 

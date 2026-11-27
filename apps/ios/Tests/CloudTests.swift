@@ -212,11 +212,11 @@ final class CloudTests: XCTestCase {
     func testLinkedUserDocumentIsNeverACleanupCandidate() async throws {
         let item = CloudItem(id: UUID(), generation: UUID(), name: "Notes.md", sourceDevice: "Mac", created: Date(),
             storage: .linked, path: "Notes.md", folderName: source.lastPathComponent, folderCopy: false,
-            byteCount: nil, fileCount: 1, revision: "source-revision")
+            byteCount: nil, fileCount: 1, revision: CloudPaths.digest(try Data(contentsOf: source.appendingPathComponent("Notes.md"))))
         try await remote.create(item)
         await phone.refresh()
         XCTAssertTrue(phone.needsFolder(item))
-        try phone.bind(item, to: source)
+        try await phone.bind(item, to: source)
         let opened = try await phone.open(item)
         XCTAssertEqual(opened.access.root.resolvingSymlinksInPath().pathComponents, source.pathComponents)
         XCTAssertEqual(try Data(contentsOf: opened.access.root.appendingPathComponent(opened.path)),
@@ -452,7 +452,7 @@ final class CloudTests: XCTestCase {
         let first = try await mac.send(root: source, path: "Notes.md", folder: false)
         let second = try await mac.send(root: source, path: "Notes.md", folder: false)
         let gate = PausedDeletionMetadata(base: remote, item: first.id)
-        let connection = CloudConnection(account: connection.account, root: connection.root,
+        let connection = CloudConnection(account: self.connection.account, root: self.connection.root,
             metadata: gate, isCurrent: { true }, testOnly: true)
         let batch = CloudLibrary(storage: base.appendingPathComponent("Batch"), deviceName: "Fixture Batch") { connection }
         await batch.refresh()
@@ -467,6 +467,157 @@ final class CloudTests: XCTestCase {
         XCTAssertTrue(FileManager.default.fileExists(atPath: cloudDirectory(second).path))
         let snapshot = try await remote.snapshot()
         XCTAssertEqual(snapshot.items.first { $0.id == second.id }?.state, .active)
+    }
+
+    func testRemoteDeletionCleansAnotherDevicesPrivateDownload() async throws {
+        let item = try await mac.send(root: source, path: "Notes.md", folder: false)
+        await phone.refresh()
+        let opened = try await phone.open(item)
+        await mac.delete([item])
+        await phone.refresh()
+        XCTAssertFalse(FileManager.default.fileExists(atPath: opened.access.root.path))
+        XCTAssertTrue(phone.copies.isEmpty)
+    }
+
+    func testRemoteDeletionKeepsChangedDownloadsVisibleForReview() async throws {
+        let item = try await mac.send(root: source, path: "Notes.md", folder: false)
+        await phone.refresh()
+        let opened = try await phone.open(item)
+        let file = opened.access.root.appendingPathComponent("Notes.md")
+        let changed = Data("Keep changes from another app.".utf8)
+        try changed.write(to: file)
+        await mac.delete([item])
+        await phone.refresh()
+        XCTAssertEqual(try Data(contentsOf: file), changed)
+        XCTAssertNotNil(phone.itemErrors[item.id])
+        XCTAssertEqual(phone.copies.map(\.id), [item.id])
+        let review = try await phone.openLocalReview(item)
+        XCTAssertEqual(try Data(contentsOf: review.access.root.appendingPathComponent("Notes.md")), changed)
+    }
+
+    func testIncompletePrivateDownloadIsRebuiltWithEveryAsset() async throws {
+        let item = try await mac.send(root: source, path: "Notes.md", folder: true)
+        await phone.refresh()
+        let opened = try await phone.open(item)
+        try FileManager.default.removeItem(at: opened.access.root.appendingPathComponent("Notes.md"))
+        let repaired = try await phone.open(item)
+        XCTAssertEqual(try Data(contentsOf: repaired.access.root.appendingPathComponent("Notes.md")),
+                       try Data(contentsOf: source.appendingPathComponent("Notes.md")))
+        XCTAssertEqual(try Data(contentsOf: repaired.access.root.appendingPathComponent("Images/image.png")), Data([1, 2, 3, 4]))
+    }
+
+    func testIncompleteDownloadWithOtherEditsIsKeptDuringRepair() async throws {
+        let item = try await mac.send(root: source, path: "Notes.md", folder: true)
+        await phone.refresh()
+        let opened = try await phone.open(item)
+        let image = opened.access.root.appendingPathComponent("Images/image.png")
+        let changed = Data([8, 9, 10])
+        try changed.write(to: image)
+        try FileManager.default.removeItem(at: opened.access.root.appendingPathComponent("Notes.md"))
+        await fails { _ = try await self.phone.open(item) }
+        XCTAssertEqual(try Data(contentsOf: image), changed)
+    }
+
+    func testAnOlderRefreshCannotHideACompletedPublication() async throws {
+        let gate = StaleSnapshotMetadata(base: remote)
+        let connection = CloudConnection(account: self.connection.account, root: self.connection.root,
+            metadata: gate, isCurrent: { true }, testOnly: true)
+        let library = CloudLibrary(storage: base.appendingPathComponent("Concurrent"), deviceName: "Fixture") { connection }
+        await library.refresh()
+        await gate.pauseNext()
+        let refresh = Task { await library.refresh() }
+        try await gate.waitUntilPaused()
+        let item = try await library.send(root: source, path: "Notes.md", folder: false)
+        XCTAssertFalse(library.uploading(item))
+        await gate.release()
+        await refresh.value
+        XCTAssertEqual(library.continuing.map(\.id), [item.id])
+        let opened = try await library.open(item)
+        XCTAssertTrue(FileManager.default.fileExists(atPath: opened.access.root.appendingPathComponent("Notes.md").path))
+        await library.flushPositions()
+    }
+
+    func testProtectionIsHeldUntilEveryReaderOwnerReleasesIt() async throws {
+        let item = try await mac.send(root: source, path: "Notes.md", folder: true)
+        let first = UUID(), second = UUID(), clean = UUID()
+        mac.setProtected(item.identity, true, owner: first, document: "Notes.md")
+        mac.setProtected(item.identity, false, owner: clean, document: "Notes.md")
+        XCTAssertTrue(mac.protected(item))
+        mac.setProtected(item.identity, true, owner: second, document: "Notes.md")
+        mac.setProtected(item.identity, false, owner: first, document: "Notes.md")
+        XCTAssertTrue(mac.protected(item))
+        await mac.delete([item])
+        XCTAssertTrue(FileManager.default.fileExists(atPath: cloudDirectory(item).path))
+        mac.setProtected(item.identity, false, owner: second, document: "Notes.md")
+        XCTAssertFalse(mac.protected(item))
+    }
+
+    func testAnotherDocumentCannotClearPersistedDraftProtection() async throws {
+        let item = try await mac.send(root: source, path: "Notes.md", folder: true)
+        mac.setProtected(item.identity, true, owner: UUID(), document: "Images/image.png")
+        let connection = connection!
+        let restarted = CloudLibrary(storage: base.appendingPathComponent("Mac"), deviceName: "Fixture") { connection }
+        await restarted.refresh()
+        restarted.setProtected(item.identity, false, owner: UUID(), document: "Notes.md")
+        XCTAssertTrue(restarted.protected(item))
+        await restarted.removeDownload(item)
+        XCTAssertNotNil(restarted.itemErrors[item.id])
+    }
+
+    func testFirstLinkedBindingRejectsADifferentSameNamedDocument() async throws {
+        let files = CloudFiles(connection: connection, local: base.appendingPathComponent("Link"))
+        let item = try await files.link(root: source, path: "Notes.md", device: "Fixture")
+        try await remote.create(item)
+        await phone.refresh()
+        let other = base.appendingPathComponent("Other Project")
+        try FileManager.default.createDirectory(at: other, withIntermediateDirectories: true)
+        try Data("# A different document".utf8).write(to: other.appendingPathComponent("Notes.md"))
+        await fails { try await self.phone.bind(item, to: other) }
+        XCTAssertTrue(phone.needsFolder(item))
+        try await phone.bind(item, to: other, allowChanged: true)
+        let opened = try await phone.open(item)
+        XCTAssertEqual(try Data(contentsOf: opened.access.root.appendingPathComponent("Notes.md")), Data("# A different document".utf8))
+    }
+
+    func testRetirementKeepsRecoveryDraftsAndEditableSourceReaders() async throws {
+        let item = try await mac.send(root: source, path: "Notes.md", folder: true)
+        let folder = try await WorkspaceIO.remember(source)
+        let copy = FileSelection(folder: folder, path: "Notes.md", cloudItem: item)
+        let recovered = copy.session(storage: base.appendingPathComponent("Recovery"))
+        await recovered.load()
+        recovered.draft = "Keep the recovered draft."
+        recovered.recovered = true
+        var navigation = LibraryNavigation()
+        navigation.open(copy, compact: true)
+        navigation.retireCloudItems([item.id])
+        XCTAssertEqual(navigation.selected?.id, copy.id)
+        XCTAssertEqual(recovered.draft, "Keep the recovered draft.")
+        XCTAssertNotNil(recovered.error)
+        let original = FileSelection(folder: folder, path: "Notes.md", cloudItem: item, readOnly: false)
+        let editor = original.session(storage: base.appendingPathComponent("Editable"))
+        await editor.load()
+        navigation.open(original, compact: true)
+        navigation.retireCloudItems([item.id])
+        XCTAssertEqual(navigation.selected?.id, original.id)
+        XCTAssertNil(editor.sharedItem)
+        XCTAssertTrue(editor.canEdit)
+    }
+
+    func testFolderAuthorizationUsesHandoffInsteadOfAnOlderCloudPosition() async throws {
+        let files = CloudFiles(connection: connection, local: base.appendingPathComponent("Handoff"))
+        let item = try await files.link(root: source, path: "Notes.md", device: "Mac")
+        try await remote.create(item)
+        try await remote.record(CloudReading(item: item.identity, deviceID: UUID(), deviceName: "Mac", modified: Date(),
+            position: CloudPosition(path: "Notes.md", heading: "old", progress: 0.1, page: 1)))
+        await phone.refresh()
+        XCTAssertTrue(phone.needsFolder(item))
+        let location = CloudPosition(path: "Notes.md", heading: "handoff", progress: 0.7, page: 7)
+        let request = CloudFolderRequest(item: item, position: location)
+        let opened = try await request.complete(using: phone, folder: source)
+        XCTAssertEqual(opened.position, location)
+        XCTAssertFalse(phone.needsFolder(item))
+        XCTAssertEqual(try Data(contentsOf: opened.access.root.appendingPathComponent(opened.path)),
+                       try Data(contentsOf: source.appendingPathComponent("Notes.md")))
     }
 
     private func cloudDirectory(_ item: CloudItem) -> URL {
@@ -528,4 +679,29 @@ private actor PausedDeletionMetadata: CloudMetadata {
         }
     }
     func release() { continuation?.resume(); continuation = nil }
+}
+
+private actor StaleSnapshotMetadata: CloudMetadata {
+    let base: LocalCloudMetadata
+    private var pause = false
+    private var continuation: CheckedContinuation<Void, Never>?
+    init(base: LocalCloudMetadata) { self.base = base }
+    func pauseNext() { pause = true }
+    func snapshot() async throws -> CloudSnapshot {
+        let captured = try await base.snapshot()
+        if pause { pause = false; await withCheckedContinuation { continuation = $0 } }
+        return captured
+    }
+    func waitUntilPaused() async throws {
+        let deadline = Date().addingTimeInterval(5)
+        while continuation == nil {
+            if Date() > deadline { throw CloudFailure.message("The controlled snapshot did not start.") }
+            try await Task.sleep(for: .milliseconds(1))
+        }
+    }
+    func release() { continuation?.resume(); continuation = nil }
+    func create(_ item: CloudItem) async throws { try await base.create(item) }
+    func record(_ reading: CloudReading) async throws { try await base.record(reading) }
+    func beginDeletion(_ request: CloudDeletion) async throws -> CloudItem { try await base.beginDeletion(request) }
+    func finishDeletion(_ request: CloudDeletion) async throws { try await base.finishDeletion(request) }
 }

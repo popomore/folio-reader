@@ -7,12 +7,15 @@ final class DocumentSession {
     let path: String
     let readOnly: Bool
     var readingPosition = CloudPosition()
+    var sharedItem: CloudItem?
+    let protectionOwner = UUID()
     private let drafts: DraftStore
     private let draftOwner = UUID()
     private let readFile: @Sendable (SavedFolder, String) async throws -> OpenedFile
     private var draftTask: Task<Void, Never>?
     private var loadInFlight = false
-    private var documentObserver: CloudFileObservation?
+    @ObservationIgnored private var documentObserver: CloudFileObservation?
+    private var observationWanted = false
     private var original = ""
     private var lastRecoverySource = ""
     private var draftVersion = 0
@@ -44,6 +47,8 @@ final class DocumentSession {
 
     func load() async {
         guard !loadInFlight, !editing, !saving else { return }
+        documentObserver?.stop()
+        documentObserver = nil
         loadInFlight = true
         loading = true
         defer { loadInFlight = false; loading = false }
@@ -51,16 +56,7 @@ final class DocumentSession {
         do {
             let opened = try await readFile(folder, path)
             self.opened = opened
-            let file = opened.access.root.appendingPathComponent(path)
-            if FileManager.default.isUbiquitousItem(at: file) {
-                documentObserver = CloudFileObservation(url: file) { [weak self] moved in
-                    guard let self, !self.saving, !self.loading else { return }
-                    if moved != nil { self.error = "This document moved. Open it again from its folder." }
-                    else if self.editing || self.hasChanges {
-                        self.error = "This document changed elsewhere. Your unsaved draft is kept."
-                    } else { Task { await self.load() } }
-                }
-            }
+            installObservation()
             revision = opened.document.revision
             original = opened.document.source ?? ""
             draft = original
@@ -107,6 +103,32 @@ final class DocumentSession {
             if version == draftVersion { lastRecoverySource = record.source }
         } catch { self.error = "Your recovery draft could not be updated: \(error.localizedDescription)" }
     }
+
+    func stopObservation() {
+        observationWanted = false
+        documentObserver?.stop()
+        documentObserver = nil
+    }
+
+    func resumeObservation() {
+        observationWanted = true
+        installObservation()
+    }
+
+    private func installObservation() {
+        guard observationWanted, documentObserver == nil, let opened else { return }
+        let file = opened.access.root.appendingPathComponent(path)
+        guard FileManager.default.isUbiquitousItem(at: file) else { return }
+        documentObserver = CloudFileObservation(url: file) { [weak self] moved in
+            guard let self, !self.saving, !self.loading else { return }
+            if moved != nil { self.error = "This document moved. Open it again from its folder." }
+            else if self.editing || self.hasChanges {
+                self.error = "This document changed elsewhere. Your unsaved draft is kept."
+            } else { Task { await self.load() } }
+        }
+    }
+
+    deinit { documentObserver?.stop() }
 
     func save() async -> Bool {
         guard !readOnly else { return false }
