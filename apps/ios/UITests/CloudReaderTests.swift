@@ -33,20 +33,20 @@ final class CloudReaderTests: XCTestCase {
         XCTAssertTrue(first.waitForExistence(timeout: 30))
         tapVisible(first)
         tapVisible(second)
-        app.buttons["delete-selected-copies"].tap()
+        tapVisible(app.buttons["delete-selected-copies"])
         XCTAssertTrue(app.alerts.firstMatch.waitForExistence(timeout: 5))
         XCTAssertTrue(app.alerts.staticTexts.containing(NSPredicate(format: "label CONTAINS %@", "Original files will be kept")).firstMatch.exists)
         screenshot("Cloud copy deletion confirmation")
         app.alerts.buttons["Cancel"].tap()
-        reveal(first)
+        reveal(first, searchAbove: true)
         XCTAssertTrue(first.exists)
         reveal(second)
         XCTAssertTrue(second.exists)
         tapVisible(second)
-        app.buttons["delete-selected-copies"].tap()
+        tapVisible(app.buttons["delete-selected-copies"])
         app.alerts.buttons["Delete Copies"].tap()
         disappears(first)
-        reveal(second)
+        reveal(second, searchAbove: true)
         XCTAssertTrue(second.exists)
         screenshot("Reading copy manager after deletion")
         app.terminate()
@@ -151,19 +151,27 @@ final class CloudReaderTests: XCTestCase {
         element.tap()
     }
 
-    private func reveal(_ element: XCUIElement) {
+    private func reveal(_ element: XCUIElement, searchAbove: Bool = false) {
         _ = element.waitForExistence(timeout: 2)
-        let list = app.collectionViews.firstMatch
-        let frame = list.exists ? list.frame : app.windows.firstMatch.frame
-        for attempt in 0..<12 {
-            if element.exists && element.isHittable && frame.contains(element.frame) { return }
-            let above = element.exists && element.frame.minY < frame.minY
-            if above || (!element.exists && attempt >= 6) {
+        let list = app.collectionViews.allElementsBoundByIndex.last(where: { $0.isHittable }) ?? app.collectionViews.firstMatch
+        for _ in 0..<16 {
+            var frame = list.exists ? list.frame : app.windows.firstMatch.frame
+            if let bar = app.navigationBars.allElementsBoundByIndex.last(where: { $0.isHittable }) {
+                let top = max(frame.minY, bar.frame.maxY)
+                frame = CGRect(x: frame.minX, y: top, width: frame.width, height: max(0, frame.maxY - top))
+            }
+            if element.exists && element.isHittable {
+                let fixedControl = !list.frame.intersects(element.frame) && app.windows.firstMatch.frame.contains(element.frame)
+                if frame.contains(element.frame) || fixedControl { return }
+            }
+            let above = element.exists ? element.frame.minY < frame.minY : searchAbove
+            if above {
                 if list.exists { list.swipeDown() } else { app.swipeDown() }
             } else {
                 if list.exists { list.swipeUp() } else { app.swipeUp() }
             }
         }
+        screenshot("Control outside the visible scroll area")
         XCTFail("The requested control could not be scrolled fully into view.")
     }
 
