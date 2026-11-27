@@ -6,8 +6,8 @@ struct DocumentReader: View {
     let follow: (String, String?) -> Void
 
     var body: some View {
-        ReaderContent(folder: selection.folder, path: selection.path, fragment: selection.fragment,
-                      storage: library.storage, follow: follow)
+        ReaderContent(session: selection.session(storage: library.storage),
+                      fragment: selection.fragment, follow: follow)
     }
 }
 
@@ -23,9 +23,9 @@ private struct ReaderContent: View {
     @State private var exporting = false
     let follow: (String, String?) -> Void
 
-    init(folder: SavedFolder, path: String, fragment: String?, storage: URL,
+    init(session: DocumentSession, fragment: String?,
          follow: @escaping (String, String?) -> Void) {
-        _session = State(initialValue: DocumentSession(folder: folder, path: path, storage: storage))
+        _session = State(initialValue: session)
         _heading = State(initialValue: fragment.map { HeadingTarget(fragment: $0) })
         self.follow = follow
     }
@@ -37,7 +37,8 @@ private struct ReaderContent: View {
                 HStack {
                     Label("Unsaved draft recovered", systemImage: "arrow.uturn.backward")
                     Spacer()
-                    Button("Review") { session.editing = true }
+                    Button("Review") { session.beginEditing() }
+                        .disabled(!session.canEdit)
                 }
                 .font(.subheadline).padding().background(.quaternary)
             }
@@ -86,7 +87,7 @@ private struct ReaderContent: View {
                     }.disabled(exporting || session.opened == nil)
                 } label: { Label("Document Actions", systemImage: "ellipsis.circle") }
                 if session.canEdit {
-                    Button("Edit Document", systemImage: "square.and.pencil") { session.editing = true }
+                    Button("Edit Document", systemImage: "square.and.pencil") { session.beginEditing() }
                 }
             }
         }
@@ -106,7 +107,7 @@ private struct ReaderContent: View {
         }
         .sheet(isPresented: $session.editing) { DocumentEditor(session: session) }
         .sheet(item: $export) { file in ShareSheet(file: file.url) }
-        .task { await session.load() }
+        .task { await session.loadIfNeeded() }
         .onChange(of: scenePhase) { _, phase in
             if phase != .active { Task { await session.persistDraft() } }
         }

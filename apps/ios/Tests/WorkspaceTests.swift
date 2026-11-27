@@ -116,6 +116,40 @@ final class WorkspaceTests: XCTestCase {
         XCTAssertEqual(try String(contentsOf: source, encoding: .utf8), "# Original")
     }
 
+    func testRefreshingAMovedBookmarkPreservesFolderIdentityAndRecovery() async throws {
+        let root = base.appendingPathComponent("Project")
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        try Data("# Original".utf8).write(to: root.appendingPathComponent("note.md"))
+        let store = LibraryStore(base: base.appendingPathComponent("App"))
+        let folder = try await store.add(root)
+        store.record(folder, path: "note.md")
+        let session = DocumentSession(folder: folder, path: "note.md", storage: store.storage)
+        await session.load()
+        session.draft = "# Recover this draft"
+        await session.persistDraft()
+        let moved = base.appendingPathComponent("Renamed")
+        try FileManager.default.moveItem(at: root, to: moved)
+        var stale = false
+        let resolved = try URL(resolvingBookmarkData: folder.bookmark, options: .withoutUI,
+                               relativeTo: nil, bookmarkDataIsStale: &stale)
+        XCTAssertEqual(resolved.standardizedFileURL, moved.standardizedFileURL)
+        XCTAssertTrue(stale, "The fixture must exercise a stale bookmark.")
+        let refreshed = try await store.add(moved)
+        XCTAssertEqual(refreshed.id, folder.id)
+        XCTAssertEqual(store.folders.count, 1)
+        XCTAssertEqual(store.recent.first?.folderID, refreshed.id)
+        XCTAssertNoThrow(try FolderAccess(folder: refreshed))
+        let recovered = DocumentSession(folder: refreshed, path: "note.md", storage: store.storage)
+        await recovered.load()
+        XCTAssertEqual(recovered.draft, "# Recover this draft")
+        XCTAssertTrue(recovered.recovered)
+        let distinct = base.appendingPathComponent("Another Project")
+        try FileManager.default.createDirectory(at: distinct, withIntermediateDirectories: true)
+        let another = try await store.add(distinct)
+        XCTAssertNotEqual(another.id, folder.id)
+        XCTAssertEqual(store.folders.count, 2)
+    }
+
     func testSuccessfulSaveClearsTheRecoveryDraft() async throws {
         try Data("# Original".utf8).write(to: base.appendingPathComponent("note.md"))
         let folder = try await WorkspaceIO.remember(base)

@@ -31,6 +31,12 @@ final class FolderAccess: @unchecked Sendable {
         try self.init(url: url)
     }
 
+    static func bookmarkLocation(_ folder: SavedFolder) throws -> URL {
+        var stale = false
+        return try URL(resolvingBookmarkData: folder.bookmark, options: .withoutUI,
+                       relativeTo: nil, bookmarkDataIsStale: &stale).resolvingSymlinksInPath().standardizedFileURL
+    }
+
     deinit {
         if scoped { scopeURL.stopAccessingSecurityScopedResource() }
     }
@@ -64,43 +70,50 @@ enum WorkspaceIO {
                 guard try root.resourceValues(forKeys: [.isDirectoryKey]).isDirectory == true else {
                     throw CoreError(message: "Choose a folder to add to your library.")
                 }
-                let bookmark = try url.bookmarkData(options: .minimalBookmark,
+                let bookmark = try root.bookmarkData(options: .minimalBookmark,
                                                      includingResourceValuesForKeys: nil, relativeTo: nil)
                 return SavedFolder(id: UUID(), name: root.lastPathComponent, bookmark: bookmark)
             }
         }.value
     }
 
-    static func list(_ folder: SavedFolder, path: String = "") async throws -> [Entry] {
+    static func list(_ folder: SavedFolder, path: String = "",
+                     coordination: any FileCoordinating = SystemFileCoordination()) async throws -> [Entry] {
         try await Task.detached(priority: .userInitiated) {
             let access = try FolderAccess(folder: folder)
             let target = try file(path, in: access, allowRoot: true)
-            return try coordinated(at: target) { _ in
-                try Core.request("list", root: access.root, path: path) ?? []
+            return try coordination.coordinate(at: target, writing: false) { url in
+                let path = try relativePath(for: url, in: access, allowRoot: true)
+                let entries: [Entry]? = try Core.request("list", root: access.root, path: path)
+                return entries ?? []
             }
         }.value
     }
 
-    static func open(_ folder: SavedFolder, path: String) async throws -> OpenedFile {
+    static func open(_ folder: SavedFolder, path: String,
+                     coordination: any FileCoordinating = SystemFileCoordination()) async throws -> OpenedFile {
         try await Task.detached(priority: .userInitiated) {
             let access = try FolderAccess(folder: folder)
             let target = try file(path, in: access)
-            return try coordinated(at: target) { _ in
+            return try coordination.coordinate(at: target, writing: false) { url in
+                let path = try relativePath(for: url, in: access)
                 guard let document: Document = try Core.request("read", root: access.root, path: path) else {
                     throw CoreError(message: "This file could not be opened.")
                 }
                 let native = [.pdf, .image, .rtf, .audio, .video].contains(document.kind)
-                let preview = native ? try snapshot(target) : nil
+                let preview = native ? try snapshot(file(path, in: access)) : nil
                 return OpenedFile(access: access, document: document, preview: preview)
             }
         }.value
     }
 
-    static func save(_ folder: SavedFolder, path: String, revision: String, source: String) async throws -> String {
+    static func save(_ folder: SavedFolder, path: String, revision: String, source: String,
+                     coordination: any FileCoordinating = SystemFileCoordination()) async throws -> String {
         try await Task.detached(priority: .userInitiated) {
             let access = try FolderAccess(folder: folder)
             let target = try file(path, in: access)
-            return try coordinated(at: target, writing: true) { _ in
+            return try coordination.coordinate(at: target, writing: true) { url in
+                let path = try relativePath(for: url, in: access)
                 guard let revision: String = try Core.request("save", root: access.root, path: path,
                                                               values: ["revision": revision, "source": source]) else {
                     throw CoreError(message: "This file could not be saved. Your draft is still available.")
@@ -110,19 +123,21 @@ enum WorkspaceIO {
         }.value
     }
 
-    static func image(_ path: String, access: FolderAccess) throws -> (Data, String) {
+    static func image(_ path: String, access: FolderAccess,
+                      coordination: any FileCoordinating = SystemFileCoordination()) throws -> (Data, String) {
         let target = try file(path, in: access)
         let types = ["png": "image/png", "jpg": "image/jpeg", "jpeg": "image/jpeg", "gif": "image/gif",
                      "webp": "image/webp", "avif": "image/avif", "bmp": "image/bmp", "svg": "image/svg+xml"]
-        guard let mime = types[target.pathExtension.lowercased()] else { throw URLError(.noPermissionsToReadFile) }
-        let data = try coordinated(at: target) { url in
-            let values = try url.resourceValues(forKeys: [.isRegularFileKey, .fileSizeKey])
+        return try coordination.coordinate(at: target, writing: false) { url in
+            let path = try relativePath(for: url, in: access)
+            let actual = try file(path, in: access)
+            guard let mime = types[actual.pathExtension.lowercased()] else { throw URLError(.noPermissionsToReadFile) }
+            let values = try actual.resourceValues(forKeys: [.isRegularFileKey, .fileSizeKey])
             guard values.isRegularFile == true, let size = values.fileSize, size <= 24 * 1024 * 1024 else {
                 throw URLError(.dataLengthExceedsMaximum)
             }
-            return try Data(contentsOf: url)
+            return (try Data(contentsOf: actual), mime)
         }
-        return (data, mime)
     }
 
     static func importFiles(_ urls: [URL], into directory: URL) async throws -> [String] {
@@ -172,10 +187,14 @@ enum WorkspaceIO {
         }.value
     }
 
-    static func export(_ folder: SavedFolder, path: String) async throws -> PreviewFile {
+    static func export(_ folder: SavedFolder, path: String,
+                       coordination: any FileCoordinating = SystemFileCoordination()) async throws -> PreviewFile {
         try await Task.detached(priority: .userInitiated) {
             let access = try FolderAccess(folder: folder)
-            return try coordinated(at: file(path, in: access)) { try snapshot($0) }
+            return try coordination.coordinate(at: file(path, in: access), writing: false) { url in
+                let path = try relativePath(for: url, in: access)
+                return try snapshot(file(path, in: access))
+            }
         }.value
     }
 
@@ -185,20 +204,17 @@ enum WorkspaceIO {
         return url
     }
 
+    private static func relativePath(for url: URL, in access: FolderAccess, allowRoot: Bool = false) throws -> String {
+        let root = access.root.pathComponents
+        let components = url.standardizedFileURL.pathComponents
+        guard url.isFileURL, components.starts(with: root) else { throw URLError(.noPermissionsToReadFile) }
+        let path = components.dropFirst(root.count).joined(separator: "/")
+        _ = try file(path, in: access, allowRoot: allowRoot)
+        return path
+    }
+
     static func coordinated<T>(at url: URL, writing: Bool = false, _ operation: (URL) throws -> T) throws -> T {
-        var coordinationError: NSError?
-        var result: Result<T, Error>?
-        let accessor: (URL) -> Void = { coordinatedURL in result = Result { try operation(coordinatedURL) } }
-        let coordinator = NSFileCoordinator()
-        if writing {
-            coordinator.coordinate(writingItemAt: url, options: .forReplacing, error: &coordinationError,
-                                   byAccessor: accessor)
-        } else {
-            coordinator.coordinate(readingItemAt: url, options: [], error: &coordinationError, byAccessor: accessor)
-        }
-        if let coordinationError { throw coordinationError }
-        guard let result else { throw CocoaError(.fileReadUnknown) }
-        return try result.get()
+        try SystemFileCoordination().coordinate(at: url, writing: writing, operation)
     }
 
     private static func snapshot(_ url: URL) throws -> PreviewFile {

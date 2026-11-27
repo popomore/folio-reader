@@ -2,6 +2,7 @@ import Foundation
 import XCTest
 @testable import Folio
 
+@MainActor
 final class NavigationTests: XCTestCase {
     func testBackThenExpansionPreservesTheVisibleDocumentAndItsHeading() {
         let folder = SavedFolder(id: UUID(), name: "Project", bookmark: Data())

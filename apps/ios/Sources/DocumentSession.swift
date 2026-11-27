@@ -6,7 +6,9 @@ final class DocumentSession {
     let folder: SavedFolder
     let path: String
     private let drafts: DraftStore
+    private let readFile: @Sendable (SavedFolder, String) async throws -> OpenedFile
     private var draftTask: Task<Void, Never>?
+    private var loadInFlight = false
     private var original = ""
     private(set) var revision: String?
     private(set) var opened: OpenedFile?
@@ -17,25 +19,33 @@ final class DocumentSession {
     var recovered = false
     var editing = false
     var hasChanges: Bool { draft != original }
-    var canEdit: Bool { revision != nil }
+    var canEdit: Bool { revision != nil && !loading && !saving }
     var name: String { URL(fileURLWithPath: path).lastPathComponent }
     private var key: String { "\(folder.id)/\(path)" }
 
-    init(folder: SavedFolder, path: String, storage: URL) {
+    init(folder: SavedFolder, path: String, storage: URL,
+         readFile: @escaping @Sendable (SavedFolder, String) async throws -> OpenedFile = {
+             try await WorkspaceIO.open($0, path: $1)
+         }) {
         self.folder = folder
         self.path = path
+        self.readFile = readFile
         drafts = DraftStore(directory: storage.appendingPathComponent("Drafts"))
     }
 
     func load() async {
+        guard !loadInFlight, !editing, !saving else { return }
+        loadInFlight = true
         loading = true
+        defer { loadInFlight = false; loading = false }
         error = nil
         do {
-            let opened = try await WorkspaceIO.open(folder, path: path)
+            let opened = try await readFile(folder, path)
             self.opened = opened
             revision = opened.document.revision
             original = opened.document.source ?? ""
             draft = original
+            recovered = false
             if let saved = try await drafts.read(key), opened.document.revision != nil {
                 if saved.source == original {
                     try await drafts.remove(key)
@@ -46,7 +56,14 @@ final class DocumentSession {
                 }
             }
         } catch { self.error = error.localizedDescription }
-        loading = false
+    }
+
+    func beginEditing() {
+        if canEdit { editing = true }
+    }
+
+    func loadIfNeeded() async {
+        if opened == nil { await load() }
     }
 
     func draftChanged() {
@@ -66,7 +83,7 @@ final class DocumentSession {
     }
 
     func save() async -> Bool {
-        guard let revision, !saving else { return false }
+        guard let revision, !loading, !saving else { return false }
         saving = true
         error = nil
         draftTask?.cancel()

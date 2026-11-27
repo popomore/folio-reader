@@ -51,7 +51,7 @@ struct ReaderWeb: UIViewRepresentable {
         private var style = ""
         private var heading: HeadingTarget?
         private var ready = false
-        private var scroll: Double = 0
+        private(set) var scroll: Double = 0
         private var tasks: [ObjectIdentifier: Task<Void, Never>] = [:]
 
         init(owner: ReaderWeb) { self.owner = owner }
@@ -97,8 +97,9 @@ struct ReaderWeb: UIViewRepresentable {
             ready = true
             style = ""
             appearance(in: view)
+            let headingPending = owner.heading != nil && owner.heading != heading
             navigateHeading(in: view)
-            if scroll > 0 {
+            if !headingPending, scroll > 0 {
                 view.callAsyncJavaScript("window.scrollTo(0, y)", arguments: ["y": scroll], in: nil, in: .page)
             }
         }

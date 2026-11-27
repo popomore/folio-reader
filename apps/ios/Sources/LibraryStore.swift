@@ -42,9 +42,13 @@ final class LibraryStore {
     @discardableResult
     func add(_ url: URL) async throws -> SavedFolder {
         let folder = try await WorkspaceIO.remember(url)
-        let root = try FolderAccess(folder: folder).root
-        if let existing = folders.first(where: { (try? FolderAccess(folder: $0).root) == root }) {
-            return existing
+        let access = try FolderAccess(folder: folder)
+        defer { withExtendedLifetime(access) {} }
+        if let index = folders.firstIndex(where: { (try? FolderAccess.bookmarkLocation($0)) == access.root }) {
+            let refreshed = SavedFolder(id: folders[index].id, name: folder.name, bookmark: folder.bookmark)
+            state.folders[index] = refreshed
+            persist()
+            return refreshed
         }
         state.folders.append(folder)
         persist()

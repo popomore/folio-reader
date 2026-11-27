@@ -4,7 +4,32 @@ struct FileSelection: Hashable, Identifiable, Sendable {
     let id = UUID()
     let folder: SavedFolder
     let path: String
-    var fragment: String? = nil
+    let fragment: String?
+    private let reader: SelectionSession
+
+    @MainActor
+    init(folder: SavedFolder, path: String, fragment: String? = nil) {
+        self.folder = folder
+        self.path = path
+        self.fragment = fragment
+        reader = SelectionSession()
+    }
+
+    static func == (lhs: Self, rhs: Self) -> Bool { lhs.id == rhs.id }
+    func hash(into hasher: inout Hasher) { hasher.combine(id) }
+
+    @MainActor
+    func session(storage: URL) -> DocumentSession {
+        if let session = reader.value { return session }
+        let session = DocumentSession(folder: folder, path: path, storage: storage)
+        reader.value = session
+        return session
+    }
+}
+
+@MainActor
+private final class SelectionSession {
+    var value: DocumentSession?
 }
 
 struct FolderLocation: Hashable, Sendable {

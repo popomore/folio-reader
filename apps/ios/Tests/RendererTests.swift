@@ -113,6 +113,58 @@ final class RendererTests: XCTestCase {
         XCTAssertTrue(landed, "The destination reader must scroll to the decoded heading after its page loads.")
     }
 
+    func testPendingHeadingWinsOverScrollRestorationDuringReload() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("FolioReload-\(UUID())")
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let padding = String(repeating: "A paragraph that provides enough space to scroll.\n\n", count: 36)
+        try Data(("# Top\n\n" + padding + "# Target\n\n" + padding).utf8).write(to: root.appendingPathComponent("note.md"))
+        let folder = try await WorkspaceIO.remember(root)
+        let opened = try await WorkspaceIO.open(folder, path: "note.md")
+        let html = try XCTUnwrap(opened.document.preview).html
+        func reader(_ html: String, heading: HeadingTarget? = nil) -> ReaderWeb {
+            ReaderWeb(access: opened.access, path: "note.md", html: html, size: 17, serif: false,
+                      heading: heading, error: .constant(nil), follow: { _, _ in })
+        }
+        let controller = UIHostingController(rootView: reader(html))
+        let scene = try XCTUnwrap(UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }.first)
+        let previous = scene.windows.first(where: \.isKeyWindow)
+        let window = UIWindow(windowScene: scene)
+        window.rootViewController = controller
+        window.makeKeyAndVisible()
+        defer { window.isHidden = true; previous?.makeKeyAndVisible() }
+        let web = try await waitForWebView(in: controller.view)
+        let ready = try await waitForScript("!!document.getElementById('target') && typeof window.folioHeading === 'function'", in: web)
+        XCTAssertTrue(ready)
+        guard ready else { return }
+        let coordinator = try XCTUnwrap(web.navigationDelegate as? ReaderWeb.Coordinator)
+        _ = try await web.evaluateJavaScript("window.scrollTo(0, 600)")
+        for _ in 0..<100 {
+            if abs(coordinator.scroll - 600) < 5 { break }
+            try await Task.sleep(for: .milliseconds(100))
+        }
+        XCTAssertEqual(coordinator.scroll, 600, accuracy: 5)
+        let heading = HeadingTarget(fragment: "target")
+        controller.rootView = reader(html + "<p>First reload</p>", heading: heading)
+        let landed = try await waitForScript("""
+            document.body.innerText.includes('First reload') &&
+            Math.abs(document.getElementById('target')?.getBoundingClientRect().top) < 100 &&
+            window.scrollY > 600
+            """, in: web)
+        XCTAssertTrue(landed, "A new heading request must take priority over the saved scroll position.")
+        guard landed else { return }
+        _ = try await web.evaluateJavaScript("window.scrollTo(0, 600)")
+        for _ in 0..<100 {
+            if abs(coordinator.scroll - 600) < 5 { break }
+            try await Task.sleep(for: .milliseconds(100))
+        }
+        controller.rootView = reader(html + "<p>Second reload</p>", heading: heading)
+        let restored = try await waitForScript("""
+            document.body.innerText.includes('Second reload') && Math.abs(window.scrollY - 600) < 5
+            """, in: web)
+        XCTAssertTrue(restored, "A reload with no new heading request must retain ordinary scroll restoration.")
+    }
+
     private func waitForScript(_ condition: String, in web: WKWebView) async throws -> Bool {
         let deadline = ContinuousClock.now.advanced(by: .seconds(60))
         repeat {

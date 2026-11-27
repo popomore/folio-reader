@@ -4,10 +4,16 @@ cd "$(dirname "$0")/.."
 device="${FOLIO_IOS_SIMULATOR:-}"
 if [[ -z "$device" ]]; then
   device="$(xcrun simctl list devices available -j | python3 -c '
-import json, sys
-devices = [d for group in json.load(sys.stdin)["devices"].values() for d in group if d["name"].startswith("iPhone ")]
+import json, re, sys
+devices = [
+    d
+    for runtime, group in json.load(sys.stdin)["devices"].items()
+    if (version := re.search(r"\.iOS-(\d+)(?:-|$)", runtime)) and int(version.group(1)) >= 17
+    for d in group
+    if d["name"].startswith("iPhone ")
+]
 if not devices:
-    sys.exit("Install an iPhone simulator runtime in Xcode, or set FOLIO_IOS_SIMULATOR.")
+    sys.exit("Install an iOS 17 or newer iPhone simulator runtime, or set FOLIO_IOS_SIMULATOR.")
 devices.sort(key=lambda d: (d["state"] != "Booted", "Pro" not in d["name"], d["name"]))
 print(devices[0]["udid"])
 ')"

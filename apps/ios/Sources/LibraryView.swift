@@ -137,7 +137,7 @@ struct LibraryView: View {
                         }
                         .contextMenu {
                             Button("Remove from Library", systemImage: "minus.circle", role: .destructive) {
-                                if navigation.selected?.folder == folder { navigation.selected = nil }
+                                if navigation.selected?.folder.id == folder.id { navigation.selected = nil }
                                 library.remove(folder)
                             }
                         }
@@ -194,11 +194,11 @@ struct FolderBrowser: View {
     let folder: SavedFolder
     let path: String
     let open: (SavedFolder, String) -> Void
-    @State private var entries: [Entry] = []
+    @State private var listing = FolderListing()
     @State private var query = ""
-    @State private var loading = true
-    @State private var failure: String?
-    private var filtered: [Entry] { query.isEmpty ? entries : entries.filter { $0.name.localizedStandardContains(query) } }
+    private var filtered: [Entry] {
+        query.isEmpty ? listing.entries : listing.entries.filter { $0.name.localizedStandardContains(query) }
+    }
 
     var body: some View {
         List(filtered) { entry in
@@ -211,9 +211,9 @@ struct FolderBrowser: View {
             }
         }
         .overlay {
-            if loading {
+            if listing.loading {
                 ProgressView("Opening Folder…")
-            } else if let failure {
+            } else if let failure = listing.failure {
                 ContentUnavailableView {
                     Label("Folder Unavailable", systemImage: "folder.badge.questionmark")
                 } description: { Text(failure) } actions: { Button("Try Again") { Task { await reload() } } }
@@ -231,7 +231,7 @@ struct FolderBrowser: View {
         .toolbar {
             ToolbarItem(placement: .primaryAction) {
                 Button("Refresh Folder", systemImage: "arrow.clockwise") { Task { await reload() } }
-                    .disabled(loading)
+                    .disabled(listing.loading)
             }
         }
         .task { await reload() }
@@ -253,10 +253,6 @@ struct FolderBrowser: View {
     }
 
     private func reload() async {
-        loading = entries.isEmpty
-        failure = nil
-        do { entries = try await WorkspaceIO.list(folder, path: path) }
-        catch { failure = error.localizedDescription }
-        loading = false
+        await listing.reload(folder, path: path)
     }
 }
