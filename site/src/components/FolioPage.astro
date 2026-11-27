@@ -1,4 +1,5 @@
 ---
+import { messages as siteMessages } from '../locales/index.ts';
 import ProductSite from '../site-kit/ProductSite.astro';
 import { productActions } from '../site-kit/actions';
 import type { Locale, Product } from '../site-kit/types';
@@ -11,44 +12,15 @@ const product: Product = config;
 const copy = product.copy[locale];
 const a = productActions(product, locale);
 const zh = locale === 'zh';
-const words = zh ? {
-  contents: '本页内容', preview: '快速预览', formats: '支持的格式', workspace: '文件工作区', get: '下载与源码',
-  context: '查看智能体生成的文件', flowTitle: '通过命令打开预览',
-  flow: [{ title: '保存文件', body: '让智能体将文档、表格或图表保存为本地文件。' }, { title: '打开预览', body: '运行 folio preview FILE，打开快速预览窗口。' }, { title: '关闭或编辑', body: '按 Esc 关闭，或选择「Open in Folio」进入工作区。' }],
-  command: '安装应用附带的 folio 命令后，智能体或脚本可用此命令打开文件：',
-  commandGuide: '查看命令安装与使用说明',
-  formatsTitle: '支持的文件格式',
-  formatLabel: '类型', formatExample: '格式',
-  formatsList: [ ['文档与笔记', 'Markdown · PDF · RTF · HTML'], ['源码与配置', 'UTF-8 文本与常见源码文件'], ['数据表格', 'CSV · TSV'], ['图表', 'Mermaid · Vega-Lite'], ['媒体', '图片、音频与视频'] ],
-  workspaceTitle: '标签、分栏与文本编辑',
-  workspaceBody: '从预览窗口选择「Open in Folio」进入工作区。可以同时打开多个文件、左右对照，也可以编辑支持的文本文件。',
-  workspaceNote: '工作区支持文件夹导航、标签和左右分栏。',
-  sourceTitle: '下载 Folio',
-  sourceBody: '下载 macOS 预览版，或按仓库指南从源码构建。',
-  questions: '常见问题', footer: 'macOS 文件查看器',
-} : {
-  contents: 'On this page', preview: 'Quick preview', formats: 'Supported formats', workspace: 'Workspace', get: 'Download and source',
-  context: 'View files from your agent', flowTitle: 'Open a preview from the terminal',
-  flow: [{ title: 'Save a file', body: 'Have your agent save a document, table, or diagram as a local file.' }, { title: 'Open the preview', body: 'Run folio preview FILE to open a quick-preview window.' }, { title: 'Close or edit', body: 'Press Esc to close, or choose “Open in Folio” to use the workspace.' }],
-  command: 'After installing the bundled folio command, an agent or script can open a file with:',
-  commandGuide: 'Command setup and usage',
-  formatsTitle: 'Supported file formats',
-  formatLabel: 'Type', formatExample: 'Formats',
-  formatsList: [ ['Documents & notes', 'Markdown · PDF · RTF · HTML'], ['Code & configuration', 'UTF-8 text and source files'], ['Tables', 'CSV · TSV'], ['Diagrams', 'Mermaid · Vega-Lite'], ['Media', 'Images, audio, and video'] ],
-  workspaceTitle: 'Tabs, split panes, and text editing',
-  workspaceBody: 'Choose “Open in Folio” from the preview window to use the workspace. Open multiple files, compare them side by side, and edit supported text files.',
-  workspaceNote: 'The workspace includes folder navigation, tabs, and split panes.',
-  sourceTitle: 'Download Folio',
-  sourceBody: 'Download the macOS preview or build from source using the repository guide.',
-  questions: 'Questions', footer: 'File viewer for macOS',
-};
+const messages = siteMessages[locale];
+const words = messages.page;
 const chapters = [['preview', words.preview], ['formats', words.formats], ['workspace', words.workspace], ['download', words.get]];
 ---
 <ProductSite {product} {locale}>
   <header class="fo-header fo-container">
-    <a class="fo-brand" href={a.home} aria-label={`Folio ${zh ? '首页' : 'home'}`}><img src="/icon.png" alt="" width="40" height="40" /><span>Folio</span></a>
+    <a class="fo-brand" href={a.home} aria-label={`Folio ${messages.accessibility.home}`}><img src="/icon.png" alt="" width="40" height="40" /><span>Folio</span></a>
     <p>{words.context}</p>
-    <a class="fo-language" href={zh ? '/' : '/zh/'} lang={zh ? 'en' : 'zh-CN'} aria-label={zh ? 'Read this page in English' : '用中文阅读此页'}>{zh ? 'English' : '中文'}</a>
+    <a class="fo-language" href={zh ? '/' : '/zh/'} lang={zh ? 'en' : 'zh-CN'} aria-label={messages.accessibility.languageLabel}>{messages.accessibility.languageName}</a>
   </header>
   <div class="fo-layout fo-container">
     <aside class="fo-rail"><nav aria-label={words.contents}><p class="eyebrow">{words.contents}</p><ol>{chapters.map(([id, label], index) => <li><a href={`#${id}`}><span aria-hidden="true">{String(index + 1).padStart(2, '0')}</span>{label}</a></li>)}</ol><a class="fo-guide" href={product.guide}>{a.guide} ↗</a></nav></aside>
@@ -76,5 +48,5 @@ const chapters = [['preview', words.preview], ['formats', words.formats], ['work
       </section>
     </main>
   </div>
-  <footer class="fo-footer fo-container"><p>Folio · {words.footer}</p><nav aria-label={zh ? '页脚链接' : 'Footer links'}><a href={`${product.repository}/blob/main/LICENSE`}>{a.license}</a><a href="https://chuo.me">chuo.me ↗</a><a href="#top">{a.back} ↑</a></nav></footer>
+  <footer class="fo-footer fo-container"><p>Folio · {words.footer}</p><nav aria-label={messages.accessibility.footerLinks}><a href={`${product.repository}/blob/main/LICENSE`}>{a.license}</a><a href="https://chuo.me">chuo.me ↗</a><a href="#top">{a.back} ↑</a></nav></footer>
 </ProductSite>
